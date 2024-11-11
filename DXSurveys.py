@@ -140,13 +140,6 @@ class FastSurveyHeader(SurveyHeader):
             self.vertical_section_azimuth = math.radians(self.vertical_section_azimuth)
 
 
-# def _get_convergence(lat, lon, from_crs='EPSG:32043'):
-#     crs_spcs = CRS(from_crs)  # Use Utah Central Zone in State Plane
-#     p = Proj(crs_spcs)
-#     declination = p.get_factors(lon, lat, False, True).meridian_convergence
-#     return declination
-
-
 def _get_convergence(lat: float, lon: float, from_crs: str = 'EPSG:32043') -> float:
     """Calculate the meridian convergence angle for a given latitude/longitude coordinate.
 
@@ -225,15 +218,6 @@ def _check_and_insert_zero_md(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
-# def _check_and_insert_zero_md(df):
-#     if df['MeasuredDepth'].iloc[0] != 0:
-#         # Get the first row
-#         first_row = df.iloc[0].copy()
-#         # Set MD to 0
-#         first_row['MeasuredDepth'] = 0
-#         # Insert the new row at the beginning
-#         df = pd.concat([pd.DataFrame([first_row]), df]).reset_index(drop=True)
-#     return df
 
 def _return_spelled_north_ref(val: str) -> str:
     """Convert single letter north reference codes to full spelled-out versions.
@@ -264,9 +248,6 @@ def _return_spelled_north_ref(val: str) -> str:
     """
     # Convert to lowercase for case-insensitive comparison and use conditional expressions
     return 'true' if val.lower() == 't' else 'grid' if val.lower() == 'g' else val
-
-# def _return_spelled_north_ref(val):
-#     return 'true' if val.lower() == 't' else 'grid' if val.lower() == 'g' else val
 
 def _solve_utm(md: np.ndarray,
                lat1: float,
@@ -332,16 +313,6 @@ def _solve_utm(md: np.ndarray,
     return (np.array([utm.from_latlon(i[0], i[1])[:2] for i in lst]).astype(int),
             np.array(lst))
 
-# def _solve_utm(md, lat1, lon1, min_curve):
-#     geod = Geod(ellps='WGS84')
-#     lst = [[lat1, lon1]]
-#     for i in range(len(md) - 1):
-#         d_x, d_y = min_curve.delta_x[i + 1], min_curve.delta_y[i + 1]
-#         lon_x, lat_y, _ = geod.fwd(abs(lon1) * -1, lat1, 90 if d_x >= 0 else 270, abs(d_x) * 0.3048)
-#         lon1, lat1, _ = geod.fwd(abs(lon_x) * -1, lat_y, 0 if d_y >= 0 else 180, abs(d_y) * 0.3048)
-#         lst.append([lat1, lon1])
-#     return np.array([utm.from_latlon(i[0], i[1])[:2] for i in lst]).astype(int), np.array(lst)
-#
 def _toolface_solve(survey: Any) -> np.ndarray:
     """Calculate tool face angles for all survey points in a wellbore trajectory.
 
@@ -383,12 +354,6 @@ def _toolface_solve(survey: Any) -> np.ndarray:
     # Return array with duplicated last value
     return np.array(tool_face + [tool_face[-1]])
 
-
-# def _toolface_solve(survey):
-#     vectors, pos_nev = survey.vec_nev, survey.pos_nev
-#     tool_face = [math.degrees(we.utils.get_toolface(pos_nev[i], pos_nev[i + 1], vectors[i])) for i in
-#                  range(len(pos_nev) - 1)]
-#     return np.array(tool_face + [tool_face[-1]])
 def _get_reference_settings(ref_type: Literal['t', 'g']) -> Dict[str, str]:
     """Get reference system settings for survey calculations.
 
@@ -432,19 +397,6 @@ def _get_reference_settings(ref_type: Literal['t', 'g']) -> Dict[str, str]:
         'deg_type': 'azi_true_deg'
     }
 
-# def _get_reference_settings(ref_type):
-#     if ref_type == 't':
-#         return {
-#             'north_ref': 't',
-#             'rad_type': 'azi_true_rad',
-#             'deg_type': 'azi_true_deg'
-#         }
-#     return {
-#         'north_ref': 'g',
-#         'rad_type': 'azi_true_rad',
-#         'deg_type': 'azi_true_deg'
-#     }
-
 def _setup_survey_header(north_ref: Literal['t', 'g'], conv_angle: float) -> FastSurveyHeader:
     """Create a survey header with specified reference system and convergence angle.
 
@@ -478,13 +430,6 @@ def _setup_survey_header(north_ref: Literal['t', 'g'], conv_angle: float) -> Fas
         deg=False,
         convergence=math.radians(conv_angle)
     )
-
-# def _setup_survey_header(north_ref, conv_angle):
-#     return FastSurveyHeader(
-#         azi_reference=_return_spelled_north_ref(north_ref.lower()),
-#         deg=False,
-#         convergence=math.radians(conv_angle)
-#     )
 
 def _create_survey(
         df: pd.DataFrame,
@@ -539,31 +484,6 @@ def _create_survey(
         survey = survey.interpolate_survey(step=steps)
 
     return survey
-
-# def _create_survey(df, start_nev, header, stepped_boo, steps):
-#     survey = we.survey.Survey(
-#         md=df['MeasuredDepth'],
-#         inc=df['Inclination'],
-#         azi=df['Azimuth'],
-#         start_nev=start_nev,
-#         deg=False,
-#         header=header,
-#         error_model='ISCWSA MWD Rev4'
-#     )
-#     if stepped_boo:
-#         survey = survey.interpolate_survey(step=steps)
-#     return survey
-
-
-# def _process_min_curve(df, survey, rad_type, start_nev):
-#     return we.utils.MinCurve(
-#         md=df['MeasuredDepth'],
-#         inc=df['Inclination'],
-#         azi=getattr(survey, rad_type),
-#         unit='feet',
-#         start_xyz=start_nev
-#     )
-
 
 def _process_min_curve(
         df: pd.DataFrame,
@@ -685,37 +605,6 @@ def _create_output_dict(
         'DepthActual': z
     }
 
-# def _create_output_dict(survey, min_curve, utm_vals, latlons, tool_face, deg_type):
-#     lats, lons = latlons.T
-#     x, y, z = min_curve.poss.T
-#     easting, northing = utm_vals.T
-#
-#     return {
-#         'MeasuredDepth': survey.md,
-#         'Inclination': survey.inc_deg,
-#         'Azimuth': getattr(survey, deg_type),
-#         'TVD': survey.tvd,
-#         'RatioFactor': min_curve.rf,
-#         'N Offset': survey.y,
-#         'E Offset': survey.x,
-#         'ToolFace': tool_face,
-#         'Vertical Section': survey.vertical_section,
-#         'Easting': easting,
-#         'Northing': northing,
-#         'Lat': lats,
-#         'Lon': lons,
-#         'DeltaZ': min_curve.delta_z,
-#         'DeltaY': min_curve.delta_y,
-#         'DeltaX': min_curve.delta_x,
-#         'DeltaMD': min_curve.delta_md,
-#         'DogLegSeverity': min_curve.dls,
-#         'BuildRadius': survey.radius,
-#         'BuildRate': survey.build_rate,
-#         'TurnRate': survey.turn_rate,
-#         'PositionX': y,
-#         'PositionY': x,
-#         'DepthActual': z
-#     }
 
 
 class SurveyProcess:
@@ -812,36 +701,6 @@ class SurveyProcess:
         self.df_t, self.kop_t, self.prop_azi_t = self._main_process('t')
         self.df_g, self.kop_g, self.prop_azi_g = self._main_process('g')
 
-# class SurveyProcess:
-#     def __init__(self,
-#                  df_referenced,
-#                  drilled_depths,
-#                  stepped_boo=False,
-#                  steps=10,
-#                  elevation = 0,
-#                  coords_type = 'latlon'):
-#         self.coords_type = coords_type
-#         self.elevation = elevation
-#         self.start_lat, self.start_lon = df_referenced[['lat', 'lon']].iloc[0].tolist()
-#
-#         if self.coords_type == 'latlon':
-#             df_referenced = self._convert_coords_to_nev(df_referenced)
-#         self.start_n, self.start_e= df_referenced[['n', 'e']].iloc[0].tolist()
-#         self.steps = steps
-#         self.stepped_boo = stepped_boo
-#         for col in ['Azimuth', 'Inclination']:
-#             df_referenced[col] = np.radians(df_referenced[col])
-#         df_referenced = _check_and_insert_zero_md(df_referenced)
-#         self.original = copy.deepcopy(df_referenced)
-#         self.df_referenced = df_referenced
-#         self.drilled_depths = drilled_depths
-#         self.df, self.kop_lp = pd.DataFrame(), pd.DataFrame()
-#         self.conv_angle = _get_convergence(self.start_lat, self.start_lon)
-#         self.start_nev = np.array([self.start_n, self.start_e, self.elevation])
-#
-#         self.df_t, self.kop_t, self.prop_azi_t = self._main_process('t')
-#         self.df_g, self.kop_g, self.prop_azi_g = self._main_process('g')
-
     def _convert_coords_to_nev(self, df: pd.DataFrame) -> pd.DataFrame:
         """Convert geographic coordinates (lat/lon) to local North-East-Vertical (NEV) coordinates.
 
@@ -888,10 +747,7 @@ class SurveyProcess:
         return df
 
 
-    # def _convert_coords_to_nev(self, df):
-    #     proj = Proj(proj="aeqd", datum="WGS84", lat_0=self.start_lat, lon_0=self.start_lon, units="us-ft")
-    #     df['n'], df['e'] = proj(df['lon'].values, df['lat'].values)
-    #     return df
+
     def _convert_coords_from_nev(self, n: np.ndarray, e: np.ndarray) -> Tuple[List[float], List[float]]:
         """Convert local North-East-Vertical (NEV) coordinates back to geographic coordinates.
 
@@ -942,12 +798,6 @@ class SurveyProcess:
         return lats, lons
 
 
-    # def _convert_coords_from_nev(self, n, e):
-    #     pts = list(zip(n,e))
-    #     proj = Proj(proj="aeqd", datum="WGS84", lat_0=self.start_lat, lon_0=self.start_lon, units="us-ft")
-    #     latlon_points = [proj(e, n, inverse=True) for n, e in pts]
-    #     lats, lons = [i[1] for i in latlon_points], [i[0] for i in latlon_points]
-    #     return lats, lons
     def _drilled_depths_process(self, df: pd.DataFrame) -> pd.DataFrame:
         """Process measured depths to assign formation/feature labels to survey points.
 
@@ -1003,15 +853,6 @@ class SurveyProcess:
         )
 
         return df
-
-
-    # def _drilled_depths_process(self, df):
-    #     self.drilled_depths['Interval'] = pd.IntervalIndex(self.drilled_depths['Interval'], closed='left')
-    #     interval_to_feature = dict(zip(self.drilled_depths['Interval'], self.drilled_depths['Feature']))
-    #     df['Feature'] = df['MeasuredDepth'].apply(
-    #         lambda x: next((interval_to_feature[interval] for interval in interval_to_feature if x in interval),
-    #                        'Unknown'))
-    #     return df
 
     def _main_process(
             self,
@@ -1105,118 +946,6 @@ class SurveyProcess:
 
         return df, self.kop_lp, proposed_azimuth
 
-    #
-    # def _main_process(self, ref_type):
-    #     # Define constants
-    #     columns_to_round = [
-    #         'MeasuredDepth', 'Inclination', 'Azimuth', 'TVD', 'N Offset', 'E Offset',
-    #         'Vertical Section', 'DeltaZ', 'DeltaY', 'DeltaX', 'DeltaMD'
-    #     ]
-    #
-    #     # Get reference settings
-    #     ref_settings = _get_reference_settings(ref_type)
-    #     north_ref = ref_settings['north_ref']
-    #     rad_type = ref_settings['rad_type']
-    #     deg_type = ref_settings['deg_type']
-    #
-    #     # Setup survey header and process KOP
-    #     header = _setup_survey_header(north_ref, self.conv_angle)
-    #     self.kop_lp = self._find_kop_and_lp(self.df_referenced, north_ref, rad_type)
-    #
-    #     # Process DataFrame
-    #     self.df = pd.concat([self.df_referenced, self.kop_lp], ignore_index=True)
-    #     self.df = self.df.drop_duplicates(subset='MeasuredDepth', keep='first')
-    #     self.df = self.df.sort_values('MeasuredDepth').reset_index(drop=True)
-    #
-    #     # Create and process survey
-    #     survey_used = _create_survey(self.df, self.start_nev, header, self.stepped_boo, self.steps)
-    #     proposed_azimuth = survey_used.survey_deg[-1][2]
-    #
-    #     # Process min curve and coordinates
-    #     min_curve = _process_min_curve(self.df, survey_used, rad_type, self.start_nev)
-    #     utm_vals, latlons = _solve_utm(self.df['MeasuredDepth'], self.start_lat, self.start_lon, min_curve)
-    #
-    #     # Calculate tool face and create output DataFrame
-    #     tool_face = _toolface_solve(survey_used)
-    #     outputs = _create_output_dict(survey_used, min_curve, utm_vals, latlons, tool_face, deg_type)
-    #     df = pd.DataFrame(outputs)
-    #
-    #     # Final processing
-    #     df[columns_to_round] = df[columns_to_round].round(2)
-    #     if not self.stepped_boo:
-    #         init_md = self.df['MeasuredDepth'].tolist() + self.kop_lp['MeasuredDepth'].tolist()
-    #         df = df[df['MeasuredDepth'].isin(init_md)]
-    #
-    #     # Add shape points and process drilled depths
-    #     df = df.reset_index(drop=True)
-    #     df['shp_pt'] = df.apply(lambda row: Point(row['Easting'], row['Northing']), axis=1)
-    #     df['point_index'] = df.index
-    #     df = self._drilled_depths_process(df)
-    #
-    #     # Reindex columns
-    #     final_columns = [
-    #         'Feature', 'MeasuredDepth', 'Inclination', 'Azimuth', 'TVD', 'Vertical Section',
-    #         'RatioFactor', 'DogLegSeverity', 'DeltaMD', 'BuildRadius', 'BuildRate', 'TurnRate',
-    #         'DeltaX', 'DeltaY', 'DeltaZ', 'PositionX', 'PositionY', 'DepthActual', 'Easting',
-    #         'Northing', 'Lat', 'Lon', 'shp_pt', 'point_index'
-    #     ]
-    #     df = df.reindex(columns=final_columns)
-    #
-    #     return df, self.kop_lp, proposed_azimuth
-
-    # def _main_process(self, ref_type):
-    #     if ref_type == 't':
-    #         north_ref = 't'
-    #         rad_type = 'azi_true_rad'
-    #         deg_type = 'azi_true_deg'
-    #     else:
-    #         north_ref = 'g'
-    #         rad_type = 'azi_true_rad'
-    #         deg_type = 'azi_true_deg'
-    #     columns_to_round = ['MeasuredDepth', 'Inclination', 'Azimuth', 'TVD', 'N Offset', 'E Offset',
-    #                         'Vertical Section', 'DeltaZ', 'DeltaY', 'DeltaX', 'DeltaMD']
-    #     header = FastSurveyHeader(azi_reference=_return_spelled_north_ref(north_ref.lower()), deg=False,
-    #                               convergence=math.radians(self.conv_angle))
-    #     self.kop_lp = self._find_kop_and_lp(self.df_referenced, north_ref, rad_type)
-    #     self.df = pd.concat([self.df_referenced, self.kop_lp], ignore_index=True)
-    #     self.df = self.df.drop_duplicates(subset='MeasuredDepth', keep='first')
-    #     self.df = self.df.sort_values('MeasuredDepth').reset_index(drop=True)
-    #     survey_used = we.survey.Survey(md=self.df['MeasuredDepth'], inc=self.df['Inclination'],
-    #                                    azi=self.df['Azimuth'], start_nev=self.start_nev, deg=False, header=header,
-    #                                    error_model='ISCWSA MWD Rev4')
-    #     if self.stepped_boo:
-    #         survey_used = survey_used.interpolate_survey(step=self.steps)
-    #     proposed_azimuth = survey_used.survey_deg[-1][2]
-    #     min_curve = we.utils.MinCurve(md=self.df['MeasuredDepth'], inc=self.df['Inclination'],
-    #                                   azi=getattr(survey_used, rad_type), unit='feet', start_xyz=self.start_nev)
-    #     utm_vals, latlons = _solve_utm(self.df['MeasuredDepth'], self.start_lat, self.start_lon, min_curve)
-    #     lats, lons = latlons.T
-    #     x,y,z =  min_curve.poss.T
-    #     easting, northing = utm_vals.T
-    #     tool_face = _toolface_solve(survey_used)
-    #     outputs = {
-    #         'MeasuredDepth': survey_used.md, 'Inclination': survey_used.inc_deg,
-    #         'Azimuth': getattr(survey_used, deg_type),
-    #         'TVD': survey_used.tvd, 'RatioFactor': min_curve.rf, 'N Offset': survey_used.y, 'E Offset': survey_used.x,
-    #         'ToolFace': tool_face, 'Vertical Section': survey_used.vertical_section, 'Easting': easting,
-    #         'Northing': northing, 'Lat': lats, 'Lon':lons,
-    #         'DeltaZ': min_curve.delta_z, 'DeltaY': min_curve.delta_y, 'DeltaX': min_curve.delta_x,
-    #         'DeltaMD': min_curve.delta_md, 'DogLegSeverity': min_curve.dls, 'BuildRadius': survey_used.radius,
-    #         'BuildRate': survey_used.build_rate, 'TurnRate': survey_used.turn_rate, 'PositionX': y, 'PositionY': x, 'DepthActual': z}
-    #     df = pd.DataFrame(outputs)
-    #
-    #     df[columns_to_round] = df[columns_to_round].round(2)
-    #     if not self.stepped_boo:
-    #         init_md = self.df['MeasuredDepth'].tolist() + self.kop_lp['MeasuredDepth'].tolist()
-    #         df = df[df['MeasuredDepth'].isin(init_md)]
-    #     df = df.reset_index(drop=True)
-    #     df['shp_pt'] = df.apply(
-    #         lambda row: Point(row['Easting'], row['Northing']), axis=1)
-    #     df['point_index'] = df.index
-    #     df = self._drilled_depths_process(df)
-    #     df = df.reindex(columns=['Feature', 'MeasuredDepth', 'Inclination', 'Azimuth', 'TVD', 'Vertical Section','RatioFactor', 'DogLegSeverity', 'DeltaMD','BuildRadius', 'BuildRate', 'TurnRate',
-    #                              'DeltaX', 'DeltaY', 'DeltaZ', 'PositionX', 'PositionY', 'DepthActual', 'Easting', 'Northing','Lat', 'Lon','shp_pt', 'point_index'])
-    #     return df, self.kop_lp, proposed_azimuth
     def _find_kop_and_lp(
             self,
             df: pd.DataFrame,
@@ -1325,75 +1054,3 @@ class SurveyProcess:
             })
 
         return result[['MeasuredDepth', 'Inclination', 'Azimuth', 'Point']]
-
-    # def _find_kop_and_lp(self, df, north_ref, rad_type):
-    #     def is_valid_number(x):
-    #         return pd.notnull(x) and np.isreal(x) and x > 0
-    #
-    #     header = FastSurveyHeader(
-    #         azi_reference=_return_spelled_north_ref(north_ref.lower()),
-    #         deg=False,
-    #         convergence=math.radians(self.conv_angle)
-    #     )
-    #
-    #     # Create Survey object
-    #
-    #     s = we.survey.Survey(
-    #         md=df['MeasuredDepth'].values,
-    #         inc=df['Inclination'].values,
-    #         azi=df['Azimuth'].values,
-    #         start_nev=self.start_nev,
-    #         deg=False,
-    #         header=header,
-    #         error_model='ISCWSA MWD Rev4'
-    #     )
-    #
-    #     # Interpolate survey with numpy operations
-    #     md = np.arange(s.md[0], s.md[-1], 10)
-    #     inc = np.interp(md, s.md, s.inc_rad)
-    #     azi = np.interp(md, s.md, getattr(s, rad_type))
-    #
-    #     dls = np.interp(md, s.md, s.dls)
-    #
-    #     kop_index = np.argmax(dls > 1.5)
-    #     lp_index = np.argmax((np.degrees(inc) > 85) & (dls < 1.0))
-    #
-    #     # Create result DataFrame
-    #     result = pd.DataFrame({
-    #         'MeasuredDepth': [md[kop_index], md[lp_index]],
-    #         'Inclination': [inc[kop_index], inc[lp_index]],
-    #         'Azimuth': [azi[kop_index], azi[lp_index]],
-    #         'Point': ['KOP', 'LP']
-    #     })
-    #     invalid_x = result[~result['MeasuredDepth'].apply(is_valid_number)]
-    #     if not invalid_x.empty:
-    #         VERTICAL_INC_THRESHOLD = 5.0  # Degrees below which the well is considered vertical
-    #         DEVIATED_INC_THRESHOLD = 5.0  # Degrees above which the well is considered deviated
-    #         # Interpolate survey with numpy operations
-    #         md = np.arange(s.md[0], s.md[-1], 10)
-    #         inc = np.interp(md, s.md, s.inc_rad)
-    #         azi = np.interp(md, s.md, s.azi_true_rad)
-    #
-    #         # Convert inclination to degrees for threshold comparison
-    #         inc_deg = np.degrees(inc)
-    #
-    #         # Identify KOP: First index where inclination exceeds DEVIATED_INC_THRESHOLD
-    #         kop_candidates = np.where(inc_deg > DEVIATED_INC_THRESHOLD)[0]
-    #
-    #         kop_index = kop_candidates[0]
-    #         # Identify LP: First index after KOP where inclination falls below VERTICAL_INC_THRESHOLD
-    #         lp_candidates = np.where(inc_deg[kop_index:] < VERTICAL_INC_THRESHOLD)[0]
-    #
-    #         inc_rad = np.radians(inc_deg)
-    #         lp_index = kop_index + lp_candidates[0]
-    #         result = pd.DataFrame({
-    #             'MeasuredDepth': [md[kop_index], md[lp_index]],
-    #             'Inclination': [inc_rad[kop_index], inc_rad[lp_index]],
-    #             'Azimuth': [azi[kop_index], azi[lp_index]],
-    #             'Point': ['KOP', 'LP']
-    #         })
-    #
-    #     return result[['MeasuredDepth', 'Inclination', 'Azimuth', 'Point']]
-
-
-
