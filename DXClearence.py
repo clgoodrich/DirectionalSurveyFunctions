@@ -20,10 +20,10 @@ from datetime import datetime
 from welleng.survey import SurveyHeader
 from pygeomag import GeoMag
 from typing import Optional, Tuple, Union, TypeVar
-
-
-
-def reorganize_lst_points_with_angle(
+import pstats
+from io import StringIO
+import cProfile
+def _reorganize_lst_points_with_angle(
         lst: List[List[float]],
         centroid: List[float]
 ) -> List[List[float]]:
@@ -51,7 +51,7 @@ def reorganize_lst_points_with_angle(
     Example:
         >>> points = [[1,1], [2,2]]
         >>> centroid = [0,0]
-        >>> result = reorganize_lst_points_with_angle(points, centroid)
+        >>> result = _reorganize_lst_points_with_angle(points, centroid)
         >>> print(result)
         [[1, 1, 45.0], [2, 2, 45.0]]
     """
@@ -67,13 +67,7 @@ def reorganize_lst_points_with_angle(
 
     return lst_arrange
 
-# def reorganize_lst_points_with_angle(lst, centroid):
-#     lst_arrange = [list(i) + [(math.degrees(math.atan2(centroid[1] - i[1], centroid[0] - i[0])) + 360) % 360] for i
-#                    in
-#                    lst]
-# 
-#     return lst_arrange
-def calculate_well_to_line_clearance_detailed(
+def _calculate_well_to_line_clearance_detailed(
         well_trajectory: Union[List[List[float]], npt.NDArray],
         line_points: Union[List[List[float]], npt.NDArray]
 ) -> List[Dict[str, Any]]:
@@ -109,7 +103,7 @@ def calculate_well_to_line_clearance_detailed(
     Example:
         >>> trajectory = [[0,0], [1,1], [2,2]]
         >>> line = [[0,2], [2,2]]
-        >>> results = calculate_well_to_line_clearance_detailed(trajectory, line)
+        >>> results = _calculate_well_to_line_clearance_detailed(trajectory, line)
         >>> print(f"Distance to first point: {results[0]['distance']:.2f}")
     """
     # Convert inputs to numpy arrays
@@ -166,96 +160,7 @@ def calculate_well_to_line_clearance_detailed(
 
     return result
 
-# def calculate_well_to_line_clearance_detailed(well_trajectory, line_points):
-#     well_trajectory = np.array(well_trajectory)
-#     line_points = np.array(line_points)
-#     p1, p2 = line_points
-#     line_vector = p2 - p1
-#     line_length_squared = np.sum(line_vector ** 2)
-#
-#     # Vector from line start to all well points
-#     well_points_diff = well_trajectory - p1
-#
-#     # Calculate the projection factor t for all points at once
-#     t = np.divide(np.sum(well_points_diff * line_vector, axis=1), line_length_squared, where=line_length_squared != 0)
-#
-#     # Clamp t to [0, 1]
-#     t = np.clip(t, 0, 1)
-#
-#     # Calculate closest points on the line for all well points
-#     closest_points = p1 + t[:, np.newaxis] * line_vector
-#
-#     # Calculate distances for all well points to their closest points on the line
-#     distances = np.linalg.norm(well_trajectory - closest_points, axis=1)
-#
-#     # Calculate the angle for all well points
-#     well_to_closest = well_trajectory - closest_points
-#     norm_well_to_closest = np.linalg.norm(well_to_closest, axis=1)
-#     norm_line_vector = np.linalg.norm(line_vector)
-#     angle_cos = np.sum(well_to_closest * line_vector, axis=1) / (norm_well_to_closest * norm_line_vector + 1e-10)
-#     angles = np.degrees(np.arccos(np.clip(angle_cos, -1, 1)))
-#
-#     # Ensure angles are the smaller (acute) angle
-#     angles = np.where(angles > 90, 180 - angles, angles)
-#
-#     # Prepare the result in a structured way
-#     result = [{
-#         "point_index": i,
-#         "well_point": well_trajectory[i],
-#         "distance": distances[i],
-#         "closest_surface_point": closest_points[i],
-#         "intersection_angle": angles[i],
-#         "original_segment": line_points
-#     } for i in range(len(well_trajectory))]
-#     # print(result)
-#     # print(foo)
-#     return result
-
-
-# def calculate_well_to_line_clearance_detailed2(well_trajectory, line_points):
-#     well_trajectory = np.array(well_trajectory)
-#     line_points = np.array(line_points)
-#     p1, p2 = line_points
-#     line_vector = p2 - p1
-#     line_length_squared = np.sum(line_vector ** 2)
-#
-#     detailed_results = []
-#     for i, well_point in enumerate(well_trajectory):
-#         # Vector from line start to well point
-#         t = np.divide(np.dot(well_point - p1, line_vector), line_length_squared,
-#                       where=line_length_squared != 0,
-#                       out=np.zeros_like(line_length_squared))
-#         # Clamp t to [0, 1] to keep point on the segment
-#         t = max(0, min(1, t))
-#
-#         # Calculate the closest point on the line segment
-#         closest_point = p1 + t * line_vector
-#         # Calculate the distance
-#         distance = np.linalg.norm(well_point - closest_point)
-#
-#         # Calculate the angle
-#         well_to_closest = well_point - closest_point
-#         epsilon = 1e-10  # Adjust this value as needed
-#         angle = np.degrees(np.arccos(np.dot(well_to_closest, line_vector) /
-#                                      (np.linalg.norm(well_to_closest) * np.linalg.norm(line_vector) + epsilon)))
-#         # Ensure the angle is the smaller one (acute angle)
-#         if angle > 90:
-#             angle = 180 - angle
-#
-#         result = {
-#             "point_index": i,
-#             "well_point": well_point,
-#             "distance": distance,
-#             "closest_surface_point": closest_point,
-#             "intersection_angle": angle,
-#             "original_segment": line_points
-#         }
-#         detailed_results.append(result)
-#     # print(detailed_results)
-#     # print(foo)
-#     return detailed_results
-
-def optimized_corner_process(
+def _optimized_corner_process(
         trajectory: Union[List[List[float]], npt.NDArray]
 ) -> List[List[float]]:
     """Process a trajectory to identify and sort corner points using convex hull and RDP simplification.
@@ -292,7 +197,7 @@ def optimized_corner_process(
 
     Example:
         >>> traj = [[0,0], [1,0], [1,1], [0,1]]
-        >>> corners = optimized_corner_process(traj)
+        >>> corners = _optimized_corner_process(traj)
         >>> print(f"Found {len(corners)} corners")
     """
     # Convert to numpy array for vector operations
@@ -332,40 +237,9 @@ def optimized_corner_process(
     result = np.column_stack((corners, centroid_angles))
 
     return result.tolist()
-# def optimized_corner_process(trajectory):
-#     # Convert trajectory to numpy array
-#     trajectory = np.array(trajectory)
-#
-#     # Calculate centroid
-#     centroid = Polygon(trajectory).centroid.coords[0]
-#
-#     # Use ConvexHull for clockwise sorting
-#     hull = ConvexHull(trajectory)
-#     trajectory = trajectory[hull.vertices]
-#
-#     # Simplify trajectory
-#     epsilon = 0.002 if (35 < trajectory[0, 0] < 55 or 35 < trajectory[0, 1] < 55) else 200
-#     simplified = rdp(np.vstack((trajectory, trajectory[0])), epsilon=epsilon)
-#
-#     # Calculate angles
-#     vectors = np.diff(simplified, axis=0)
-#     angles = np.arctan2(vectors[:, 1], vectors[:, 0])
-#     angle_diffs = np.diff(angles, append=angles[0] - 2 * np.pi)
-#     angle_diffs = np.abs(np.where(angle_diffs > np.pi, angle_diffs - 2 * np.pi, angle_diffs))
-#
-#     # Find corners
-#     corners = simplified[1:][angle_diffs > np.pi / 35]
-#
-#     # Calculate angles from centroid
-#     centroid_vectors = corners - centroid
-#     centroid_angles = (np.degrees(np.arctan2(centroid_vectors[:, 1], centroid_vectors[:, 0])) + 360) % 360
-#
-#     # Combine coordinates and angles
-#     result = np.column_stack((corners, centroid_angles))
-#
-#     return result.tolist()
+
 T = TypeVar('T', bound=List[Any])
-def removeDupesListOfLists(lst: List[List[T]]) -> List[List[T]]:
+def _remove_dupes_list_of_lists(lst: List[List[T]]) -> List[List[T]]:
     """Removes duplicate sublists while preserving the original order.
 
     Takes a list of lists and removes any duplicate sublists by converting each
@@ -387,7 +261,7 @@ def removeDupesListOfLists(lst: List[List[T]]) -> List[List[T]]:
 
     Example:
         >>> data = [[1,2], [3,4], [1,2], [5,6]]
-        >>> result = removeDupesListOfLists(data)
+        >>> result = _remove_dupes_list_of_lists(data)
         >>> print(result)  # [[1,2], [3,4], [5,6]]
 
     Raises:
@@ -406,16 +280,7 @@ def removeDupesListOfLists(lst: List[List[T]]) -> List[List[T]]:
 
     return dup_free
 
-# def removeDupesListOfLists(lst):
-#     dup_free = []
-#     dup_free_set = set()
-#     for x in lst:
-#         if tuple(x) not in dup_free_set:
-#             dup_free.append(x)
-#             dup_free_set.add(tuple(x))
-#     return dup_free
-
-def remove_duplicates_preserve_order(points_list: List[T]) -> List[Tuple]:
+def _remove_duplicates_preserve_order(points_list: List[T]) -> List[Tuple]:
     """Removes duplicate points while preserving order, converting results to tuples.
 
     Efficiently removes duplicate entries from a list of points/coordinates by
@@ -438,11 +303,11 @@ def remove_duplicates_preserve_order(points_list: List[T]) -> List[Tuple]:
 
     Examples:
         >>> coords = [[1,2], [3,4], [1,2], [5,6]]
-        >>> remove_duplicates_preserve_order(coords)
+        >>> _remove_duplicates_preserve_order(coords)
         [(1,2), (3,4), (5,6)]
 
         >>> points = [[0.5,1.0], [0.5,1.0], [2.0,3.0]]
-        >>> remove_duplicates_preserve_order(points)
+        >>> _remove_duplicates_preserve_order(points)
         [(0.5,1.0), (2.0,3.0)]
     """
     # Initialize tracking set and result list
@@ -458,17 +323,7 @@ def remove_duplicates_preserve_order(points_list: List[T]) -> List[Tuple]:
 
     return result
 
-# def remove_duplicates_preserve_order(points_list):
-#     seen = set()
-#     result = []
-#     for point in points_list:
-#         point_tuple = tuple(point)
-#         if point_tuple not in seen:
-#             result.append(point_tuple)
-#             seen.add(point_tuple)
-#     return result
-
-def consolidate_columns(
+def _consolidate_columns(
         df: pd.DataFrame,
         num_segments: int,
         dir_val: str
@@ -506,7 +361,7 @@ def consolidate_columns(
         >>> df = pd.DataFrame({
         ...     'distance1_up': [1.0, np.nan],
         ...     'distance2_up': [2.0, 3.0]})
-        >>> consolidate_columns(df, 2, 'up')
+        >>> _consolidate_columns(df, 2, 'up')
     """
     # Initialize list to store consolidated results
     consolidated: List[Dict[str, Any]] = []
@@ -541,34 +396,7 @@ def consolidate_columns(
 
     return pd.DataFrame(consolidated)
 
-# def consolidate_columns(df, num_segments, dir_val):
-#     consolidated = []
-#     for _, row in df.iterrows():
-#         valid_indices = [i for i in range(1, num_segments + 1)
-#                          if pd.notna(row[f'distance{i}_{dir_val}'])]
-#         if not valid_indices:
-#             consolidated.append({
-#                 'distance': np.nan,
-#                 'closest_surface_point': np.nan,
-#                 'intersection_angle': np.nan,
-#                 'segments': np.nan,
-#             })
-#         else:
-#             min_distance_index = min(valid_indices,
-#                                      key=lambda i: row[f'distance{i}_{dir_val}'])
-#             consolidated.append({
-#                 f'distance_{dir_val}': row[f'distance{min_distance_index}_{dir_val}'],
-#                 f'closest_surface_point_{dir_val}': row[
-#                     f'closest_surface_point{min_distance_index}_{dir_val}'],
-#                 f'intersection_angle_{dir_val}': row[f'intersection_angle{min_distance_index}_{dir_val}'],
-#                 f'segments_{dir_val}': row[f'segments{min_distance_index}_{dir_val}']
-#             })
-#
-#     return pd.DataFrame(consolidated)
-
-
-
-def process_row(
+def _process_row(
         row: pd.Series,
         num_segments: int,
         dir_val: str
@@ -606,7 +434,7 @@ def process_row(
         ...     'distance1_up': 1.0,
         ...     'distance2_up': 2.0
         ... })
-        >>> processed = process_row(row, 2, 'up')
+        >>> processed = _process_row(row, 2, 'up')
         # Will keep segment 1 data (85 degrees) and set segment 2 to NaN
     """
     # Extract all intersection angles for comparison
@@ -627,18 +455,7 @@ def process_row(
 
     return row
 
-# def process_row(row, num_segments, dir_val):
-#     angles = [row[f'intersection_angle{i}_{dir_val}'] for i in range(1, num_segments + 1)]
-#     closest_to_90 = min(range(len(angles)), key=lambda i: abs(angles[i] - 90))
-#     for i in range(1, num_segments + 1):
-#         if i != closest_to_90 + 1:
-#             row[f'distance{i}_{dir_val}'] = np.nan
-#             row[f'closest_surface_point{i}_{dir_val}'] = np.nan
-#             row[f'intersection_angle{i}_{dir_val}'] = np.nan
-#             row[f'segments{i}_{dir_val}'] = np.nan
-#     return row
-
-def resultsFinder(
+def _results_finder(
         segments: List[List[float]],
         dir_val: str,
         well_trajectory: List[Tuple[float, float, int]]
@@ -671,7 +488,7 @@ def resultsFinder(
     Example:
         >>> segments = [[[0,0], [1,1]], [[2,2], [3,3]]]
         >>> well = [(0.5, 0.5, 1), (1.5, 1.5, 2)]
-        >>> df = resultsFinder(segments, 'up', well)
+        >>> df = _results_finder(segments, 'up', well)
     """
     # Initialize results storage
     all_results: List[Dict[str, Any]] = []
@@ -683,7 +500,7 @@ def resultsFinder(
     # Process each segment against well trajectory
     for i, segment in enumerate(segments):
         # Calculate clearance details for current segment
-        results = calculate_well_to_line_clearance_detailed(well_trajectory_points, segment)
+        results = _calculate_well_to_line_clearance_detailed(well_trajectory_points, segment)
 
         # Store results for each well point
         for j, result in enumerate(results):
@@ -725,49 +542,13 @@ def resultsFinder(
     # Process and consolidate results
     df = df[column_order]
     num_segments = len(segments)
-    df = df.apply(lambda row: process_row(row, num_segments, dir_val), axis=1)
-    consolidated_df = consolidate_columns(df, num_segments, dir_val)
+    df = df.apply(lambda row: _process_row(row, num_segments, dir_val), axis=1)
+    consolidated_df = _consolidate_columns(df, num_segments, dir_val)
 
     # Combine with well point information
     return pd.concat([df[['point_index', 'well_point']], consolidated_df], axis=1)
 
-
-# def resultsFinder(segments, dir_val, well_trajectory):
-#
-#     all_results = []
-#     well_index, well_trajectory = [i[2] for i in well_trajectory], [i[:2] for i in well_trajectory]
-#     for i, segment in enumerate(segments):
-#         results = calculate_well_to_line_clearance_detailed(well_trajectory, segment)
-#         for j, result in enumerate(results):
-#             if i == 0:
-#                 all_results.append({'point_index': well_index[j], 'well_point': well_trajectory[j]})
-#             all_results[j][f'distance{i + 1}_{dir_val}'] = round(result['distance'] / 0.3048, 2)
-#             all_results[j][f'closest_surface_point{i + 1}_{dir_val}'] = result['closest_surface_point']
-#             all_results[j][f'intersection_angle{i + 1}_{dir_val}'] = result['intersection_angle']
-#             all_results[j][f'segments{i + 1}_{dir_val}'] = segments[0]
-#     df = pd.DataFrame(all_results)
-#     column_order = ['point_index', 'well_point'] + [
-#         f'{col}{i}_{dir_val}' for i in range(1, len(segments) + 1)
-#         for col in ['distance', 'closest_surface_point', 'intersection_angle', 'segments']]
-#     if df.empty:
-#         # Create a new DataFrame with empty columns but correct number of rows
-#         well_traj_pts = [[None, None] for i in well_trajectory]
-#         placeholder_data = {'point_index': well_index, 'well_point': well_trajectory,
-#                             f'distance1_{dir_val}': [None] * len(well_trajectory),
-#                             f'closest_surface_point1_{dir_val}': [None] * len(well_trajectory),
-#                             f'intersection_angle1_{dir_val}': [None] * len(well_trajectory),
-#                             f'segments1_{dir_val}': well_traj_pts}
-#         df = pd.DataFrame(placeholder_data)
-#         return df
-#     else:
-#         df = df[column_order]
-#         num_segments = len(segments)
-#         df = df.apply(lambda row: process_row(row, num_segments, dir_val), axis=1)
-#         consolidated_df = consolidate_columns(df, num_segments, dir_val)
-#         df = pd.concat([df[['point_index', 'well_point']], consolidated_df], axis=1)
-#         return df
-
-def regularCornerClass(
+def _regular_corner_class(
         corners: List[List[float]],
         data_lengths: List[List[float]]
 ) -> List[List[List[float]]]:
@@ -827,7 +608,7 @@ def regularCornerClass(
             Deduplicated list of points in specified order
         """
         points = [i for i in data_lengths if start_angle <= i[-1] <= end_angle]
-        return remove_duplicates_preserve_order(points[::-1] if reverse else points)
+        return _remove_duplicates_preserve_order(points[::-1] if reverse else points)
 
     def get_side(
             data_lengths: List[List[float]],
@@ -880,61 +661,13 @@ def regularCornerClass(
             if (i[-1] > data_lengths[nw_idx][-1] or i[-1] < data_lengths[sw_idx][-1])
                and i not in (east_side + south_side + north_side)
         ] + [nw_point]
-        west_side = remove_duplicates_preserve_order(west_side)
+        west_side = _remove_duplicates_preserve_order(west_side)
     else:
         west_side = []
 
     return [west_side, north_side, east_side, south_side]
 
-# def regularCornerClass(corners, data_lengths):
-#     def find_corner_point(corners, min_angle, max_angle):
-#         return next((i for i in corners if min_angle < i[-1] <= max_angle), None)
-#
-#     def find_side_points(data_lengths, start_angle, end_angle, reverse=False):
-#         points = [i for i in data_lengths if start_angle <= i[-1] <= end_angle]
-#         return remove_duplicates_preserve_order(points[::-1] if reverse else points)
-#
-#     def get_side(data_lengths, corners, start_angle, end_angle, reverse=False):
-#         start_point = find_corner_point(corners, start_angle, end_angle)
-#         end_point = find_corner_point(corners, start_angle - 90, start_angle)
-#
-#         if start_point is None or end_point is None:
-#             return []
-#
-#         start_idx = data_lengths.index(start_point)
-#         end_idx = data_lengths.index(end_point)
-#
-#         side = find_side_points(data_lengths,
-#                                 data_lengths[end_idx][-1],
-#                                 data_lengths[start_idx][-1],
-#                                 reverse)
-#
-#         return side
-#
-#     # Main code
-#     south_side = get_side(data_lengths, corners, 90, 180, reverse=True)
-#     east_side = get_side(data_lengths, corners, 180, 270, reverse=True)
-#     north_side = get_side(data_lengths, corners, 270, 360, reverse=True)
-#
-#     # West side needs special handling due to the angle wrap-around
-#     nw_point = find_corner_point(corners, 270, 360)
-#     sw_point = find_corner_point(corners, 0, 90)
-#
-#     if nw_point is not None and sw_point is not None:
-#         nw_idx = data_lengths.index(nw_point)
-#         sw_idx = data_lengths.index(sw_point)
-#         west_side = [sw_point] + [i for i in data_lengths if
-#                                   (i[-1] > data_lengths[nw_idx][-1] or
-#                                    i[-1] < data_lengths[sw_idx][-1]) and
-#                                   i not in (east_side + south_side + north_side)] + [nw_point]
-#         west_side = remove_duplicates_preserve_order(west_side)
-#     else:
-#         west_side = []
-#
-#     all_data = [west_side] + [north_side] + [east_side] + [south_side]
-#     return all_data
-
-def cornerGeneratorProcess(
+def _corner_generator_process(
         data_lengths: List[List[float]]
 ) -> Tuple[List[List[float]], List[List[List[float]]]]:
     """Processes polygon points to identify and classify corners.
@@ -959,52 +692,40 @@ def cornerGeneratorProcess(
 
     Example:
         >>> points = [[0,0], [1,0], [1,1], [0,1]]
-        >>> corners, sides = cornerGeneratorProcess(points)
+        >>> corners, sides = _corner_generator_process(points)
         >>> print(len(corners))  # Number of detected corners
         4
     """
     # Optimize corner point detection
-    corner_arrange = optimized_corner_process(data_lengths)
+    corner_arrange = _optimized_corner_process(data_lengths)
 
     # Calculate polygon centroid for angle references
     centroid = Polygon(data_lengths).centroid
     centroid_point = [centroid.x, centroid.y]
 
     # Calculate angles relative to centroid
-    corner_arrange = reorganize_lst_points_with_angle(
+    corner_arrange = _reorganize_lst_points_with_angle(
         [i[:2] for i in corner_arrange],
         centroid_point
     )
 
     # Sort and deduplicate corner points
     corners = sorted(corner_arrange, key=lambda r: r[-1])
-    corners = removeDupesListOfLists(corners)
+    corners = _remove_dupes_list_of_lists(corners)
 
     # Process all points with angles
-    data_lengths = reorganize_lst_points_with_angle(data_lengths, centroid_point)
+    data_lengths = _reorganize_lst_points_with_angle(data_lengths, centroid_point)
     data_lengths = sorted(data_lengths, key=lambda r: r[-1])
 
     # Ensure consistent list format
     corners = [list(i) for i in corners]
 
     # Classify points into directional sides
-    all_data = regularCornerClass(corners, data_lengths)
+    all_data = _regular_corner_class(corners, data_lengths)
 
     return corners, all_data
-# def cornerGeneratorProcess(data_lengths):
-#     corner_arrange = optimized_corner_process(data_lengths)
-#     centroid = Polygon(data_lengths).centroid
-#     centroid = [centroid.x, centroid.y]
-#     corner_arrange = reorganize_lst_points_with_angle([i[:2] for i in corner_arrange], centroid)
-#     corners = sorted(corner_arrange, key=lambda r: r[-1])
-#     corners = removeDupesListOfLists(corners)
-#     data_lengths = reorganize_lst_points_with_angle(data_lengths, centroid)
-#     data_lengths = sorted(data_lengths, key=lambda r: r[-1])
-#     corners = [list(i) for i in corners]
-#     all_data = regularCornerClass(corners, data_lengths)
-#     return corners, all_data
 
-def idSides(polygon: List[List[float]]) -> Tuple[List[List[List[float]]], ...]:
+def _id_sides(polygon: List[List[float]]) -> Tuple[List[List[List[float]]], ...]:
     """Identifies and segments the sides of a polygon into directional components.
 
     Takes a polygon defined by points and returns segmented lists of points organized
@@ -1023,14 +744,14 @@ def idSides(polygon: List[List[float]]) -> Tuple[List[List[List[float]]], ...]:
         Each segment is a pair of [x,y] coordinates defining start and end points
 
     Notes:
-        - Uses cornerGeneratorProcess() to identify corners and classify sides
+        - Uses _corner_generator_process() to identify corners and classify sides
         - Points are sorted based on appropriate coordinate for each direction:
           * East/West sides sort by y-coordinate
           * North/South sides sort by x-coordinate
         - Segments are created as sequential pairs of sorted points
     """
     # Process corners and generate initial side classifications
-    corners, sides_generated = cornerGeneratorProcess(polygon)
+    corners, sides_generated = _corner_generator_process(polygon)
 
     # Remove angle information from classified points
     sides_generated = [[j[:-1] for j in i] for i in sides_generated]
@@ -1057,20 +778,6 @@ def idSides(polygon: List[List[float]]) -> Tuple[List[List[List[float]]], ...]:
 
     return right_lst_segments, left_lst_segments, up_lst_segments, down_lst_segments
 
-# def idSides(polygon):
-#     corners, sides_generated = cornerGeneratorProcess(polygon)
-#     sides_generated = [[j[:-1] for j in i] for i in sides_generated]
-#     left_lst, up_lst, right_lst, down_lst = sides_generated[0], sides_generated[1], sides_generated[2], \
-#         sides_generated[3]
-#     left_lst, up_lst, right_lst, down_lst = (sorted(left_lst, key=lambda x: x[1]),
-#                                              sorted(up_lst, key=lambda x: x[0]),
-#                                              sorted(right_lst, key=lambda x: x[1], reverse=True),
-#                                              sorted(down_lst, key=lambda x: x[0], reverse=True))
-#     right_lst_segments = [[right_lst[i], right_lst[i + 1]] for i in range(len(right_lst) - 1)]
-#     left_lst_segments = [[left_lst[i], left_lst[i + 1]] for i in range(len(left_lst) - 1)]
-#     down_lst_segments = [[down_lst[i], down_lst[i + 1]] for i in range(len(down_lst) - 1)]
-#     up_lst_segments = [[up_lst[i], up_lst[i + 1]] for i in range(len(up_lst) - 1)]
-#     return right_lst_segments, left_lst_segments, up_lst_segments, down_lst_segments
 
 class ClearanceProcess:
     """Processes clearance data for well surveys and plats.
@@ -1109,7 +816,7 @@ class ClearanceProcess:
         Notes:
             - Automatically calculates concentrations upon initialization
             - Creates empty whole_df for later processing
-            - Triggers mainClearance processing during initialization
+            - Triggers _main_clearance processing during initialization
 
         Raises:
             ValueError: If required columns are missing from input DataFrames
@@ -1121,7 +828,7 @@ class ClearanceProcess:
         self.adjacent_plats = adjacent_plats
 
         # Calculate concentrations for each survey point
-        self.df['Conc'] = self.df['shp_pt'].apply(self.find_conc)
+        self.df['Conc'] = self.df['shp_pt'].apply(self._find_conc)
 
         # Extract unique concentration values
         self.all_polygons_concs = df_used['Conc'].unique()
@@ -1130,21 +837,13 @@ class ClearanceProcess:
         self.whole_df = pd.DataFrame()
 
         # Process clearance data
-        self.clearance_data = self.mainClearance()
+        # analyzeTimeNoArgs(self._main_clearance)
+        self.clearance_data = self._main_clearance()
 
         # Extract used concentration values
         self.used_conc = self.clearance_data['Conc'].unique().tolist()
-# class ClearanceProcess:
-#     def __init__(self, df_used, df_plat, adjacent_plats):
-#         self.df = df_used
-#         self.plats = df_plat
-#         self.adjacent_plats = adjacent_plats
-#         self.df['Conc'] = self.df['shp_pt'].apply(self.find_conc)
-#         self.all_polygons_concs = df_used['Conc'].unique()
-#         self.whole_df = pd.DataFrame()
-#         self.clearance_data = self.mainClearance()
-#         self.used_conc = self.clearance_data['Conc'].unique().tolist()
-    def mainClearance(self) -> pd.DataFrame:
+
+    def _main_clearance(self) -> pd.DataFrame:
         """Processes clearance calculations for well trajectories against plat boundaries.
 
         Calculates distances from well trajectory points to the boundaries of their
@@ -1172,6 +871,7 @@ class ClearanceProcess:
         """
         # Process each unique concentration
         for i in range(len(self.all_polygons_concs)):
+            print(i)
             # Extract trajectory points for current concentration
             well_traj = self.df[self.df['Conc'] == self.all_polygons_concs[i]]
             well_trajectory = well_traj[['Easting', 'Northing', 'point_index']].values
@@ -1187,13 +887,13 @@ class ClearanceProcess:
                 continue
 
             # Generate directional boundary segments
-            right_lst_segments, left_lst_segments, up_lst_segments, down_lst_segments = idSides(used_poly)
-
+            right_lst_segments, left_lst_segments, up_lst_segments, down_lst_segments = _id_sides(used_poly)
             # Calculate distances to each boundary
-            left_df = resultsFinder(left_lst_segments, 'West', well_trajectory)
-            right_df = resultsFinder(right_lst_segments, 'East', well_trajectory)
-            down_df = resultsFinder(down_lst_segments, 'South', well_trajectory)
-            up_df = resultsFinder(up_lst_segments, 'North', well_trajectory)
+            # analyzeTime2(_results_finder, [left_lst_segments, 'West', well_trajectory])
+            left_df = _results_finder(left_lst_segments, 'West', well_trajectory)
+            right_df = _results_finder(right_lst_segments, 'East', well_trajectory)
+            down_df = _results_finder(down_lst_segments, 'South', well_trajectory)
+            up_df = _results_finder(up_lst_segments, 'North', well_trajectory)
 
             # Merge north-south and east-west results
             up_down = pd.merge(up_df, down_df, on='point_index')
@@ -1228,52 +928,8 @@ class ClearanceProcess:
 
         return result
 
-    # def mainClearance(self):
-    #     for i in range(len(self.all_polygons_concs)):
-    #         well_traj = self.df[self.df['Conc'] == self.all_polygons_concs[i]]
-    #         well_trajectory = well_traj[['Easting', 'Northing', 'point_index']].values
-    #
-    #         try:
-    #             used_poly = list(
-    #                 self.plats[self.plats['Conc'] == self.all_polygons_concs[i]]['geometry'].values.tolist()[
-    #                     0].exterior.coords)
-    #         except IndexError:
-    #             print('index error on guisurvey tab')
-    #
-    #
-    #         right_lst_segments, left_lst_segments, up_lst_segments, down_lst_segments = idSides(used_poly)
-    #         left_df = resultsFinder(left_lst_segments, 'West', well_trajectory)
-    #         right_df = resultsFinder(right_lst_segments, 'East', well_trajectory)
-    #         down_df = resultsFinder(down_lst_segments, 'South', well_trajectory)
-    #         up_df = resultsFinder(up_lst_segments, 'North', well_trajectory)
-    #
-    #         up_down = pd.merge(up_df, down_df, on='point_index')
-    #         left_right = pd.merge(left_df, right_df, on='point_index')
-    #
-    #         up_down = up_down.drop(columns=['well_point_y'])
-    #         left_right = left_right.drop(columns=['well_point_y'])
-    #         all_data = pd.merge(up_down, left_right, on='point_index')
-    #
-    #         all_data = all_data.drop(columns=['well_point_x_y'])
-    #         all_data = all_data.rename(columns={'well_point_x_x': 'well_point'})
-    #
-    #         self.whole_df = pd.concat([all_data, self.whole_df]).reset_index(drop=True)
-    #     self.whole_df = self.whole_df.sort_values(by=self.whole_df.columns[0])
-    #     self.whole_df = self.whole_df.rename(
-    #         columns={'distance_East': 'FEL', 'distance_West': 'FWL', 'distance_North': 'FNL', 'distance_South': 'FSL'})
-    #     edited_df = self.whole_df[['point_index', 'FNL', 'FSL', 'FEL', "FWL"]]
-    #     result = pd.merge(self.df, edited_df, on='point_index')
-    #
-    #     return result
 
-    # def find_conc(self, point):
-    #     for idx, row in self.adjacent_plats.iterrows():
-    #         if row['geometry'].contains(point):
-    #             return row['Conc']
-    #     return None  # Return None if no matching polygon is found
-
-
-    def find_conc(self, point: Point) -> Optional[Any]:
+    def _find_conc(self, point: Point) -> Optional[Any]:
         """Finds the concentration value for a point by checking containing plat polygons.
 
         Iterates through adjacent plats to find which polygon contains the given point,
@@ -1300,3 +956,115 @@ class ClearanceProcess:
 
         # No containing polygon found
         return None
+pd.set_option('display.max_columns', None)
+pd.options.mode.chained_assignment = None
+def analyzeTime(function_call, args_list):
+
+    profiler = cProfile.Profile()
+    profiler.runcall(function_call, *args_list)
+
+    # Redirect pstats output to a string stream
+    s = StringIO()
+    ps = pstats.Stats(profiler, stream=s)
+    ps.sort_stats('cumulative')
+    ps.print_stats()
+
+    # Get the string output and process it
+    lines = s.getvalue().split('\n')
+    data = []
+    for line in lines[5:]:  # Skip the header lines
+        if line.strip():
+            fields = line.split(None, 5)
+            if len(fields) == 6:
+                ncalls, tottime, percall, cumtime, percall2, filename_lineno_function = fields
+                data.append({
+                    'ncalls': ncalls,
+                    'tottime': float(tottime),
+                    'percall': float(percall),
+                    'cumtime': float(cumtime),
+                    'percall2': float(percall2),
+                    'filename_lineno_function': filename_lineno_function
+                })
+
+    # Create DataFrame
+    df = pd.DataFrame(data)
+    excluded_location = r'C:\Work\RewriteAPD\ven2'
+    filtered_df = df[~df['filename_lineno_function'].str.contains(excluded_location, case=False, regex=False)]
+    filtered_df = filtered_df[
+        filtered_df['filename_lineno_function'].str.contains(r'C:\Work\RewriteAPD', case=False, regex=False)]
+    print(filtered_df)
+
+def analyzeTime2(function_call, args_list):
+
+    profiler = cProfile.Profile()
+    profiler.runcall(function_call, *args_list)
+
+    # Redirect pstats output to a string stream
+    s = StringIO()
+    ps = pstats.Stats(profiler, stream=s)
+    ps.sort_stats('cumulative')
+    ps.print_stats()
+
+    # Get the string output and process it
+    lines = s.getvalue().split('\n')
+    data = []
+    for line in lines[5:]:  # Skip the header lines
+        if line.strip():
+            fields = line.split(None, 5)
+            if len(fields) == 6:
+                ncalls, tottime, percall, cumtime, percall2, filename_lineno_function = fields
+                data.append({
+                    'ncalls': ncalls,
+                    'tottime': float(tottime),
+                    'percall': float(percall),
+                    'cumtime': float(cumtime),
+                    'percall2': float(percall2),
+                    'filename_lineno_function': filename_lineno_function
+                })
+
+    # Create DataFrame
+    df = pd.DataFrame(data)
+    excluded_location = r'C:\Work\RewriteAPD\ven2'
+    filtered_df = df[~df['filename_lineno_function'].str.contains(excluded_location, case=False, regex=False)]
+    # filtered_df = filtered_df[
+    #     filtered_df['filename_lineno_function'].str.contains(r'C:\Work\RewriteAPD', case=False, regex=False)]
+    print(filtered_df)
+
+def analyzeTimeNoArgs(function_call):
+
+    profiler = cProfile.Profile()
+    profiler.runcall(function_call)
+
+    # Redirect pstats output to a string stream
+    s = StringIO()
+    ps = pstats.Stats(profiler, stream=s)
+    ps.sort_stats('cumulative')
+    ps.print_stats()
+
+    # Get the string output and process it
+    lines = s.getvalue().split('\n')
+    data = []
+    for line in lines[5:]:  # Skip the header lines
+        if line.strip():
+            fields = line.split(None, 5)
+            if len(fields) == 6:
+                ncalls, tottime, percall, cumtime, percall2, filename_lineno_function = fields
+                data.append({
+                    'ncalls': ncalls,
+                    'tottime': float(tottime),
+                    'percall': float(percall),
+                    'cumtime': float(cumtime),
+                    'percall2': float(percall2),
+                    'filename_lineno_function': filename_lineno_function
+                })
+
+    # Create DataFrame
+    df = pd.DataFrame(data)
+    excluded_location = r'C:\Work\RewriteAPD\ven2'
+    filtered_df = df[~df['filename_lineno_function'].str.contains(excluded_location, case=False, regex=False)]
+    # filtered_df = filtered_df[
+    #     filtered_df['filename_lineno_function'].str.contains(r'C:\Work\RewriteAPD', case=False, regex=False)]
+    output = filtered_df.head(10).values.tolist()
+    for i in output:
+        print(i)
+    print()
