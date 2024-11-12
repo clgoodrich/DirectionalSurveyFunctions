@@ -51,10 +51,6 @@ plats_adjacent['centroid'] = plats_adjacent['centroid'].apply(lambda row: wkt.lo
 
 dx_df = SurveyProcess(df_referenced = dx_df_orig, drilled_depths = df_depths,elevation = 5515, coords_type = 'latlon')
 
-time1 = time.perf_counter()
 clear_df = ClearanceProcess(dx_df.df_t, plat_df, plats_adjacent)
-time2 = time.perf_counter()
-
-print(time2 - time1)
 base_dx_df_planned, planned_footages = clear_df.clearance_data, clear_df.whole_df
-# print(base_dx_df_planned)
+print(base_dx_df_planned)
