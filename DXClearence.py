@@ -1,4 +1,6 @@
 import sqlite3
+import time
+
 from scipy.spatial import ConvexHull
 from rdp import rdp
 import copy
@@ -23,6 +25,10 @@ from typing import Optional, Tuple, Union, TypeVar
 import pstats
 from io import StringIO
 import cProfile
+from rtree import index  # R-tree for spatial indexing
+from shapely.geometry import Point, LineString
+from shapely.strtree import STRtree
+from collections import ChainMap
 def _reorganize_lst_points_with_angle(
         lst: List[List[float]],
         centroid: List[float]
@@ -446,6 +452,7 @@ def _process_row(
                         key=lambda i: abs(angles[i] - 90))
 
     # Set all segments except closest to 90 to NaN
+
     for i in range(1, num_segments + 1):
         if i != closest_to_90 + 1:  # Add 1 since segment numbering starts at 1
             row[f'distance{i}_{dir_val}'] = np.nan
@@ -455,11 +462,79 @@ def _process_row(
 
     return row
 
+
+def set_non_closest_to_nan(df, closest_to_90, num_segments, dir_val):
+    # Create arrays of column names
+    cols_prefix = ['distance', 'closest_surface_point', 'intersection_angle', 'segments']
+    cols_to_nan = []
+
+    # Generate all column names that need to be set to NaN
+    for prefix in cols_prefix:
+        for i in range(1, num_segments + 1):
+            if i != closest_to_90 + 1:
+                cols_to_nan.append(f'{prefix}{i}_{dir_val}')
+
+    # Set all identified columns to NaN in one operation
+    df[cols_to_nan] = np.nan
+
+    return df
+
+def process_results_vectorized_pandas(all_results_dicts, well_trajectory, segments, dir_val):
+    # Create base DataFrame
+    base_df = pd.DataFrame({
+        'point_index': range(len(well_trajectory)),
+        'well_point': list(well_trajectory)
+    })
+
+    # Process each segment's results
+    for i, results in enumerate(all_results_dicts):
+        seg_num = i + 1
+
+        # Create segment specific DataFrame
+        segment_data = pd.DataFrame({
+            f'distance{seg_num}_{dir_val}': [round(r['distance'] / 0.3048, 2) for r in results],
+            f'closest_surface_point{seg_num}_{dir_val}': [r['closest_surface_point'] for r in results],
+            f'intersection_angle{seg_num}_{dir_val}': [r['intersection_angle'] for r in results],
+            f'segments{seg_num}_{dir_val}': [segments[i]] * len(results)
+        })
+
+        # Combine with base DataFrame
+        base_df = pd.concat([base_df, segment_data], axis=1)
+    return base_df
+    # return base_df.to_dict('records')
+
+
+def process_clearance_results_pandas(well_trajectory_points, segments, dir_val):
+    # Create base DataFrame
+    base_df = pd.DataFrame({
+        'point_index': range(len(well_trajectory_points)),
+        'well_point': list(well_trajectory_points)
+    })
+
+    # Process each segment
+    for i, segment in enumerate(segments):
+        results = _calculate_well_to_line_clearance_detailed(well_trajectory_points, segment)
+
+        # Create segment-specific columns
+        segment_data = pd.DataFrame({
+            f'distance{i + 1}_{dir_val}': [round(r['distance'] / 0.3048, 2) for r in results],
+            f'closest_surface_point{i + 1}_{dir_val}': [r['closest_surface_point'] for r in results],
+            f'intersection_angle{i + 1}_{dir_val}': [r['intersection_angle'] for r in results],
+            f'segments{i + 1}_{dir_val}': [segment] * len(results)
+        })
+
+        # Add to base DataFrame
+        base_df = pd.concat([base_df, segment_data], axis=1)
+
+    return base_df.to_dict('records')
+
+
 def _results_finder(
         segments: List[List[float]],
         dir_val: str,
         well_trajectory: List[Tuple[float, float, int]]
 ) -> pd.DataFrame:
+
     """Calculates and consolidates clearance measurements between well trajectory and surface segments.
 
     Processes multiple surface segments against well trajectory points to find distances,
@@ -498,6 +573,7 @@ def _results_finder(
     well_trajectory_points: List[List[float]] = [i[:2] for i in well_trajectory]
 
     # Process each segment against well trajectory
+
     for i, segment in enumerate(segments):
         # Calculate clearance details for current segment
         results = _calculate_well_to_line_clearance_detailed(well_trajectory_points, segment)
@@ -540,13 +616,118 @@ def _results_finder(
         return pd.DataFrame(placeholder_data)
 
     # Process and consolidate results
+
+
     df = df[column_order]
     num_segments = len(segments)
     df = df.apply(lambda row: _process_row(row, num_segments, dir_val), axis=1)
+
     consolidated_df = _consolidate_columns(df, num_segments, dir_val)
 
     # Combine with well point information
     return pd.concat([df[['point_index', 'well_point']], consolidated_df], axis=1)
+
+
+
+
+
+# def _results_finder(
+#         segments: List[List[float]],
+#         dir_val: str,
+#         well_trajectory: List[Tuple[float, float, int]]
+# ) -> pd.DataFrame:
+#     print(segments)
+#     print(dir_val)
+#     print(well_trajectory.tolist())
+#     """Calculates and consolidates clearance measurements between well trajectory and surface segments.
+#
+#     Processes multiple surface segments against well trajectory points to find distances,
+#     intersection angles, and closest points, then consolidates results into a DataFrame.
+#
+#     Args:
+#         segments: List of surface line segments to check against well trajectory
+#         dir_val: Direction identifier used in column naming ('up'/'down'/etc)
+#         well_trajectory: List of tuples containing (x, y, index) for well points
+#
+#     Returns:
+#         DataFrame containing consolidated results with columns:
+#             - point_index: Original well point index
+#             - well_point: (x,y) coordinates of well point
+#             - distance_{dir_val}: Minimum distance to surface
+#             - closest_surface_point_{dir_val}: Nearest point on surface
+#             - intersection_angle_{dir_val}: Angle of intersection
+#             - segments_{dir_val}: Associated surface segment
+#
+#     Notes:
+#         - Distances are converted from meters to feet (divided by 0.3048)
+#         - Empty results generate placeholder DataFrame with same structure
+#         - Results are processed to keep only points closest to 90° intersection
+#         - All floating point distances are rounded to 2 decimal places
+#
+#     Example:
+#         >>> segments = [[[0,0], [1,1]], [[2,2], [3,3]]]
+#         >>> well = [(0.5, 0.5, 1), (1.5, 1.5, 2)]
+#         >>> df = _results_finder(segments, 'up', well)
+#     """
+#     # Initialize results storage
+#     all_results: List[Dict[str, Any]] = []
+#
+#     # Separate well trajectory components
+#     well_index: List[int] = [i[2] for i in well_trajectory]
+#     well_trajectory_points: List[List[float]] = [i[:2] for i in well_trajectory]
+#
+#     # Process each segment against well trajectory
+#     for i, segment in enumerate(segments):
+#         # Calculate clearance details for current segment
+#         results = _calculate_well_to_line_clearance_detailed(well_trajectory_points, segment)
+#
+#         # Store results for each well point
+#         for j, result in enumerate(results):
+#             # Initialize well point data on first segment
+#             if i == 0:
+#                 all_results.append({
+#                     'point_index': well_index[j],
+#                     'well_point': well_trajectory_points[j]
+#                 })
+#
+#             # Add segment-specific results
+#             all_results[j].update({
+#                 f'distance{i + 1}_{dir_val}': round(result['distance'] / 0.3048, 2),
+#                 f'closest_surface_point{i + 1}_{dir_val}': result['closest_surface_point'],
+#                 f'intersection_angle{i + 1}_{dir_val}': result['intersection_angle'],
+#                 f'segments{i + 1}_{dir_val}': segments[0]
+#             })
+#
+#     # Create DataFrame and set column order
+#     df = pd.DataFrame(all_results)
+#     column_order = ['point_index', 'well_point'] + [
+#         f'{col}{i}_{dir_val}' for i in range(1, len(segments) + 1)
+#         for col in ['distance', 'closest_surface_point', 'intersection_angle', 'segments']
+#     ]
+#
+#     # Handle empty results case
+#     if df.empty:
+#         well_traj_pts = [[None, None] for _ in well_trajectory]
+#         placeholder_data = {
+#             'point_index': well_index,
+#             'well_point': well_trajectory_points,
+#             f'distance1_{dir_val}': [None] * len(well_trajectory),
+#             f'closest_surface_point1_{dir_val}': [None] * len(well_trajectory),
+#             f'intersection_angle1_{dir_val}': [None] * len(well_trajectory),
+#             f'segments1_{dir_val}': well_traj_pts
+#         }
+#         return pd.DataFrame(placeholder_data)
+#
+#     # Process and consolidate results
+#     df = df[column_order]
+#     num_segments = len(segments)
+#     df = df.apply(lambda row: _process_row(row, num_segments, dir_val), axis=1)
+#     consolidated_df = _consolidate_columns(df, num_segments, dir_val)
+#
+#     # Combine with well point information
+#     return pd.concat([df[['point_index', 'well_point']], consolidated_df], axis=1)
+#
+
 
 def _regular_corner_class(
         corners: List[List[float]],
@@ -870,8 +1051,11 @@ class ClearanceProcess:
             IndexError: When plat geometry is missing for a concentration
         """
         # Process each unique concentration
+        # time2 = time.perf_counter()
+        # sum_time += (time2 - time1)
+        # print(time2 - time1)
+        # print('sum_time', sum_time)
         for i in range(len(self.all_polygons_concs)):
-            print(i)
             # Extract trajectory points for current concentration
             well_traj = self.df[self.df['Conc'] == self.all_polygons_concs[i]]
             well_trajectory = well_traj[['Easting', 'Northing', 'point_index']].values
@@ -890,6 +1074,8 @@ class ClearanceProcess:
             right_lst_segments, left_lst_segments, up_lst_segments, down_lst_segments = _id_sides(used_poly)
             # Calculate distances to each boundary
             # analyzeTime2(_results_finder, [left_lst_segments, 'West', well_trajectory])
+            #
+
             left_df = _results_finder(left_lst_segments, 'West', well_trajectory)
             right_df = _results_finder(right_lst_segments, 'East', well_trajectory)
             down_df = _results_finder(down_lst_segments, 'South', well_trajectory)
@@ -956,115 +1142,3 @@ class ClearanceProcess:
 
         # No containing polygon found
         return None
-pd.set_option('display.max_columns', None)
-pd.options.mode.chained_assignment = None
-def analyzeTime(function_call, args_list):
-
-    profiler = cProfile.Profile()
-    profiler.runcall(function_call, *args_list)
-
-    # Redirect pstats output to a string stream
-    s = StringIO()
-    ps = pstats.Stats(profiler, stream=s)
-    ps.sort_stats('cumulative')
-    ps.print_stats()
-
-    # Get the string output and process it
-    lines = s.getvalue().split('\n')
-    data = []
-    for line in lines[5:]:  # Skip the header lines
-        if line.strip():
-            fields = line.split(None, 5)
-            if len(fields) == 6:
-                ncalls, tottime, percall, cumtime, percall2, filename_lineno_function = fields
-                data.append({
-                    'ncalls': ncalls,
-                    'tottime': float(tottime),
-                    'percall': float(percall),
-                    'cumtime': float(cumtime),
-                    'percall2': float(percall2),
-                    'filename_lineno_function': filename_lineno_function
-                })
-
-    # Create DataFrame
-    df = pd.DataFrame(data)
-    excluded_location = r'C:\Work\RewriteAPD\ven2'
-    filtered_df = df[~df['filename_lineno_function'].str.contains(excluded_location, case=False, regex=False)]
-    filtered_df = filtered_df[
-        filtered_df['filename_lineno_function'].str.contains(r'C:\Work\RewriteAPD', case=False, regex=False)]
-    print(filtered_df)
-
-def analyzeTime2(function_call, args_list):
-
-    profiler = cProfile.Profile()
-    profiler.runcall(function_call, *args_list)
-
-    # Redirect pstats output to a string stream
-    s = StringIO()
-    ps = pstats.Stats(profiler, stream=s)
-    ps.sort_stats('cumulative')
-    ps.print_stats()
-
-    # Get the string output and process it
-    lines = s.getvalue().split('\n')
-    data = []
-    for line in lines[5:]:  # Skip the header lines
-        if line.strip():
-            fields = line.split(None, 5)
-            if len(fields) == 6:
-                ncalls, tottime, percall, cumtime, percall2, filename_lineno_function = fields
-                data.append({
-                    'ncalls': ncalls,
-                    'tottime': float(tottime),
-                    'percall': float(percall),
-                    'cumtime': float(cumtime),
-                    'percall2': float(percall2),
-                    'filename_lineno_function': filename_lineno_function
-                })
-
-    # Create DataFrame
-    df = pd.DataFrame(data)
-    excluded_location = r'C:\Work\RewriteAPD\ven2'
-    filtered_df = df[~df['filename_lineno_function'].str.contains(excluded_location, case=False, regex=False)]
-    # filtered_df = filtered_df[
-    #     filtered_df['filename_lineno_function'].str.contains(r'C:\Work\RewriteAPD', case=False, regex=False)]
-    print(filtered_df)
-
-def analyzeTimeNoArgs(function_call):
-
-    profiler = cProfile.Profile()
-    profiler.runcall(function_call)
-
-    # Redirect pstats output to a string stream
-    s = StringIO()
-    ps = pstats.Stats(profiler, stream=s)
-    ps.sort_stats('cumulative')
-    ps.print_stats()
-
-    # Get the string output and process it
-    lines = s.getvalue().split('\n')
-    data = []
-    for line in lines[5:]:  # Skip the header lines
-        if line.strip():
-            fields = line.split(None, 5)
-            if len(fields) == 6:
-                ncalls, tottime, percall, cumtime, percall2, filename_lineno_function = fields
-                data.append({
-                    'ncalls': ncalls,
-                    'tottime': float(tottime),
-                    'percall': float(percall),
-                    'cumtime': float(cumtime),
-                    'percall2': float(percall2),
-                    'filename_lineno_function': filename_lineno_function
-                })
-
-    # Create DataFrame
-    df = pd.DataFrame(data)
-    excluded_location = r'C:\Work\RewriteAPD\ven2'
-    filtered_df = df[~df['filename_lineno_function'].str.contains(excluded_location, case=False, regex=False)]
-    # filtered_df = filtered_df[
-    #     filtered_df['filename_lineno_function'].str.contains(r'C:\Work\RewriteAPD', case=False, regex=False)]
-    output = filtered_df.head(10).values.tolist()
-    for i in output:
-        print(i)
-    print()
