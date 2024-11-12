@@ -32,7 +32,6 @@ Notes:
         * Inclination: Inclination angles
         * Azimuth: Azimuth angles
     - Handles both grid and true north references
-    - Supports stepped or continuous trajectory calculations
     - Integrates with spatial analysis tools via shapely geometries
 
 Dependencies:
@@ -471,14 +470,11 @@ def _create_survey(
         df: pd.DataFrame,
         start_nev: Tuple[float, float, float],
         header: 'FastSurveyHeader',
-        stepped_boo: bool,
-        steps: Optional[float] = None
 ) -> 'we.survey.Survey':
     """Create and optionally interpolate a wellbore survey object.
 
     Initializes a Survey object from measured depth, inclination, and azimuth data
-    with specified starting position and reference parameters. Optionally performs
-    survey interpolation at regular step intervals.
+    with specified starting position and reference parameters.
 
     Args:
         df: DataFrame containing survey data with columns:
@@ -487,9 +483,6 @@ def _create_survey(
             - Azimuth: Azimuth angles
         start_nev: Tuple of starting position coordinates (north, east, vertical)
         header: FastSurveyHeader object containing reference system settings
-        stepped_boo: Boolean indicating whether to interpolate survey
-        steps: Step size for interpolation in same units as measured depth.
-               Only used if stepped_boo is True.
 
     Returns:
         we.survey.Survey: Survey object containing well trajectory data and calculated parameters
@@ -514,10 +507,6 @@ def _create_survey(
         header=header,
         error_model='ISCWSA MWD Rev4'
     )
-
-    # Perform interpolation if requested
-    if stepped_boo:
-        survey = survey.interpolate_survey(step=steps)
 
     return survey
 
@@ -657,8 +646,6 @@ class SurveyProcess:
         start_lon (float): Starting longitude in decimal degrees
         start_n (float): Starting northing coordinate
         start_e (float): Starting easting coordinate
-        steps (int): Interpolation step size
-        stepped_boo (bool): Flag to enable stepped interpolation
         original (pd.DataFrame): Copy of original input data
         df_referenced (pd.DataFrame): Processed reference dataframe
         drilled_depths (List[float]): List of measured depths
@@ -678,8 +665,6 @@ class SurveyProcess:
             - Azimuth: Well azimuth in degrees
             - Inclination: Well inclination in degrees
         drilled_depths (List[float]): List of measured depths
-        stepped_boo (bool, optional): Enable stepped interpolation. Defaults to False.
-        steps (int, optional): Interpolation step size. Defaults to 10.
         elevation (float, optional): Surface elevation in feet. Defaults to 0.
         coords_type (str, optional): Coordinate system type. Defaults to 'latlon'.
 
@@ -693,8 +678,6 @@ class SurveyProcess:
     def __init__(self,
                  df_referenced: pd.DataFrame,
                  drilled_depths: List[float],
-                 stepped_boo: bool = False,
-                 steps: int = 10,
                  elevation: float = 0,
                  coords_type: str = 'latlon') -> None:
         """Initialize the SurveyProcess class with survey data and processing parameters."""
@@ -711,10 +694,6 @@ class SurveyProcess:
 
         # Store starting NEV coordinates
         self.start_n, self.start_e = df_referenced[['n', 'e']].iloc[0].tolist()
-
-        # Store processing parameters
-        self.steps = steps
-        self.stepped_boo = stepped_boo
 
         # Convert angular measurements to radians
         for col in ['Azimuth', 'Inclination']:
@@ -919,7 +898,6 @@ class SurveyProcess:
             7. Add shape points and process drilled depths
 
         Processing includes:
-            - Survey interpolation (if stepped_boo is True)
             - Coordinate transformations
             - Geometric calculations
             - Data validation and cleanup
@@ -947,7 +925,7 @@ class SurveyProcess:
         self.df = self.df.sort_values('MeasuredDepth').reset_index(drop=True)
 
         # Process survey calculations
-        survey_used = _create_survey(self.df, self.start_nev, header, self.stepped_boo, self.steps)
+        survey_used = _create_survey(self.df, self.start_nev, header)
         proposed_azimuth = survey_used.survey_deg[-1][2]
 
         # Calculate minimum curvature and coordinate transformations
@@ -959,11 +937,10 @@ class SurveyProcess:
         outputs = _create_output_dict(survey_used, min_curve, utm_vals, latlons, tool_face, deg_type)
         df = pd.DataFrame(outputs)
 
-        # Round specified columns and filter if not stepped
+        # Round specified columns
         df[columns_to_round] = df[columns_to_round].round(2)
-        if not self.stepped_boo:
-            init_md = self.df['MeasuredDepth'].tolist() + self.kop_lp['MeasuredDepth'].tolist()
-            df = df[df['MeasuredDepth'].isin(init_md)]
+        init_md = self.df['MeasuredDepth'].tolist() + self.kop_lp['MeasuredDepth'].tolist()
+        df = df[df['MeasuredDepth'].isin(init_md)]
 
         # Add shape points and process indices
         df = df.reset_index(drop=True)
