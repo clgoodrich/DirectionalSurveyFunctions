@@ -116,3 +116,4 @@ dx_df = SurveyProcess(
 )
 clear_df = ClearanceProcess(dx_df.df_t, plat_df, plats_adjacent)
 processed_dx_df, footages = clear_df.clearance_data, clear_df.whole_df
+print(processed_dx_df)
