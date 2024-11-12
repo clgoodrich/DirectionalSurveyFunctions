@@ -1,34 +1,62 @@
-import sqlite3
-import time
+"""
+DXClearance.py
+Author: Colton Goodrich
+Date: 11/10/2024
+Python Version: 3.12
+Clearance processing for wellbore survey data and plat boundaries.
 
+This module provides functionality for calculating clearance distances between
+wellbore trajectories and plat boundaries, handling spatial relationships and
+boundary analysis.
+
+Key Features:
+    - Plat boundary clearance calculations (FEL, FWL, FNL, FSL)
+    - Multi-plat spatial relationship handling
+    - Concentration assignment for survey points
+    - Boundary segmentation and distance analysis
+    - Integration with shapely geometry operations
+    - Support for adjacent plat relationships
+
+Typical usage example:
+    clearance = ClearanceProcess(
+        df_used=survey_df,
+        df_plat=plat_boundaries,
+        adjacent_plats=adjacent_plats_df
+    )
+
+    results = clearance.clearance_data
+    footages = clearance.whole_df
+
+Notes:
+    - Requires input DataFrames with specific structure:
+        * Survey points with shape geometry
+        * Plat boundaries with polygon geometry
+        * Adjacent plat definitions with geometry and Conc values
+    - Handles complex plat boundary relationships
+    - Supports multiple concentration zones
+    - Integrates with spatial analysis tools
+    - Provides cardinal direction clearances
+
+Dependencies:
+    - pandas
+    - numpy
+    - shapely
+    - geopandas (optional)
+    - scipy
+"""
 from scipy.spatial import ConvexHull
 from rdp import rdp
-import copy
 from welltrajconvert.wellbore_trajectory import *
-from shapely.geometry import Point, LineString, MultiPoint, Polygon
-import welleng as we
-from pyproj import Proj, Geod, Transformer, transform
-import matplotlib.pyplot as plt
+from shapely.geometry import Point, Polygon
 import numpy.typing as npt
-from numpy.typing import NDArray
-import utm
-# import ModuleAgnostic as ma
-from pyproj import CRS, Proj, Transformer, CRS
 import pandas as pd
 import numpy as np
 import math
-from shapely import wkt
-from datetime import datetime
-from welleng.survey import SurveyHeader
-from pygeomag import GeoMag
 from typing import Optional, Tuple, Union, TypeVar
-import pstats
-from io import StringIO
-import cProfile
-from rtree import index  # R-tree for spatial indexing
-from shapely.geometry import Point, LineString
-from shapely.strtree import STRtree
-from collections import ChainMap
+
+
+
+
 def _reorganize_lst_points_with_angle(
         lst: List[List[float]],
         centroid: List[float]

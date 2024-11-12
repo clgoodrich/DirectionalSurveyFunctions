@@ -1,29 +1,65 @@
-import sqlite3
-from scipy.spatial import ConvexHull
-from rdp import rdp
+"""
+DXSurveys.py
+Author: Colton Goodrich
+Date: 11/10/2024
+Python Version: 3.12
+Survey processing and manipulation for directional well data.
+
+This module provides functionality for processing directional survey data with
+magnetic field calculations, interpolation, and coordinate transformations.
+
+Key Features:
+    - Survey interpolation and minimum curvature calculations
+    - Magnetic field reference handling
+    - Coordinate system conversions (UTM, lat/lon)
+    - Integration with welleng library for survey calculations
+    - Support for various azimuth reference systems
+    - Error modeling using ISCWSA MWD Rev4
+
+Typical usage example:
+    survey = DXSurvey(
+        df=survey_df,
+        start_nev=[0,0,0],
+        conv_angle=1.5,
+        interpolate=True
+    )
+
+    results = survey.process_trajectory()
+
+Notes:
+    - Requires input DataFrame with standard survey columns:
+        * MeasuredDepth: Measured depth values
+        * Inclination: Inclination angles
+        * Azimuth: Azimuth angles
+    - Handles both grid and true north references
+    - Supports stepped or continuous trajectory calculations
+    - Integrates with spatial analysis tools via shapely geometries
+
+Dependencies:
+    - welleng
+    - numpy
+    - pandas
+    - pyproj
+    - shapely
+    - pygeomag
+    - scipy
+"""
+
 import copy
 from welltrajconvert.wellbore_trajectory import *
-from shapely.geometry import Point, LineString, MultiPoint, Polygon
+from shapely.geometry import Point
 import welleng as we
-from pyproj import Proj, Geod, Transformer, transform
-import matplotlib.pyplot as plt
-import time
-from dataclasses import dataclass
+from pyproj import Geod, Proj, CRS
 import utm
 import numpy.typing as npt
-# import ModuleAgnostic as ma
-from pyproj import CRS, Proj, Transformer, CRS
 import pandas as pd
 import numpy as np
 import math
-from shapely import wkt
 from datetime import datetime
 from welleng.survey import SurveyHeader
 from pygeomag import GeoMag
-from typing import Optional, Tuple, Union, Dict, Literal
-import pstats
-from io import StringIO
-import cProfile
+from typing import Optional, Tuple, Dict, Literal
+
 
 
 class FastSurveyHeader(SurveyHeader):
