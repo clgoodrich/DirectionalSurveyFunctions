@@ -562,7 +562,6 @@ def _create_output_dict(
         min_curve: 'we.utils.MinCurve',
         utm_vals: npt.NDArray[np.float64],
         latlons: npt.NDArray[np.float64],
-        tool_face: npt.NDArray[np.float64],
         deg_type: str
 ) -> Dict[str, npt.NDArray[np.float64]]:
     """Create a dictionary containing all computed survey and position data.
@@ -575,7 +574,6 @@ def _create_output_dict(
         min_curve: MinCurve object with minimum curvature calculations
         utm_vals: Array of UTM coordinates (easting, northing pairs)
         latlons: Array of latitude/longitude coordinates
-        tool_face: Array of tool face angle measurements
         deg_type: String specifying which degree attribute to use from survey
 
     Returns:
@@ -611,7 +609,7 @@ def _create_output_dict(
         'RatioFactor': min_curve.rf,
         'N Offset': survey.y,
         'E Offset': survey.x,
-        'ToolFace': tool_face,
+        'ToolFace': survey.toolface,
         'Vertical Section': survey.vertical_section,
         'Easting': easting,
         'Northing': northing,
@@ -631,7 +629,6 @@ def _create_output_dict(
     }
 
 
-
 class SurveyProcess:
     """Process and transform well survey data between different coordinate systems and reference frames.
 
@@ -648,7 +645,6 @@ class SurveyProcess:
         start_e (float): Starting easting coordinate
         original (pd.DataFrame): Copy of original input data
         df_referenced (pd.DataFrame): Processed reference dataframe
-        drilled_depths (List[float]): List of measured depths
         conv_angle (float): Convergence angle between true and grid north
         start_nev (np.ndarray): Starting position vector [north, east, vertical]
         df_t (pd.DataFrame): Processed data referenced to true north
@@ -664,7 +660,6 @@ class SurveyProcess:
             - lon: Longitude in decimal degrees
             - Azimuth: Well azimuth in degrees
             - Inclination: Well inclination in degrees
-        drilled_depths (List[float]): List of measured depths
         elevation (float, optional): Surface elevation in feet. Defaults to 0.
         coords_type (str, optional): Coordinate system type. Defaults to 'latlon'.
 
@@ -677,7 +672,6 @@ class SurveyProcess:
 
     def __init__(self,
                  df_referenced: pd.DataFrame,
-                 drilled_depths: List[float],
                  elevation: float = 0,
                  coords_type: str = 'latlon') -> None:
         """Initialize the SurveyProcess class with survey data and processing parameters."""
@@ -705,7 +699,6 @@ class SurveyProcess:
         # Store dataframes and parameters
         self.original = copy.deepcopy(df_referenced)
         self.df_referenced = df_referenced
-        self.drilled_depths = drilled_depths
         self.df, self.kop_lp = pd.DataFrame(), pd.DataFrame()
 
         # Calculate convergence angle and starting position
@@ -715,6 +708,66 @@ class SurveyProcess:
         # Process data for both true and grid north references
         self.df_t, self.kop_t, self.prop_azi_t = self._main_process('t')
         self.df_g, self.kop_g, self.prop_azi_g = self._main_process('g')
+
+    def drilled_depths_process(self, df: pd.DataFrame, drilled_depths: List[float]) -> pd.DataFrame:
+        """Process measured depths to assign formation/feature labels to survey points.
+
+        Matches each survey point's measured depth to a corresponding geological feature
+        or formation based on depth intervals. Uses left-closed intervals to ensure
+        consistent feature assignment at boundary depths.
+
+        Args:
+            df: DataFrame containing at minimum:
+                - MeasuredDepth: Survey measured depths
+
+        Returns:
+            pd.DataFrame: Input DataFrame with additional column:
+                - Feature: String identifier of geological feature/formation
+
+        Notes:
+            - Uses self.drilled_depths which must contain:
+                - Interval: Depth ranges for features
+                - Feature: Names/labels for geological features
+            - Intervals are converted to pandas IntervalIndex with left-closed bounds
+            - Points not matching any interval are labeled as 'Unknown'
+            - Each depth point can only belong to one feature interval
+
+        Examples:
+            >>> depths_df = pd.DataFrame({
+            ...     'Interval': [(0, 100), (100, 200)],
+            ...     'Feature': ['Surface', 'Reservoir']
+            ... })
+            >>> survey_df = pd.DataFrame({'MeasuredDepth': [50, 150]})
+            >>> processed = drilled_depths_process(survey_df)
+            >>> print(processed['Feature'])
+            0    Surface
+            1    Reservoir
+            :param df:
+            :param drilled_depths:
+        """
+
+        # Convert intervals to left-closed IntervalIndex
+        drilled_depths['Interval'] = pd.IntervalIndex(
+            drilled_depths['Interval'],
+            closed='left'
+        )
+
+        # Create mapping dictionary from intervals to features
+        interval_to_feature = dict(zip(
+            drilled_depths['Interval'],
+            drilled_depths['Feature']
+        ))
+
+        # Assign features based on depth intervals
+        df['Feature'] = df['MeasuredDepth'].apply(
+            lambda x: next((interval_to_feature[interval]
+                            for interval in interval_to_feature
+                            if x in interval),
+                           'Unknown')
+        )
+        df = df[['Feature', 'MeasuredDepth']]
+        return df
+
 
     def _convert_coords_to_nev(self, df: pd.DataFrame) -> pd.DataFrame:
         """Convert geographic coordinates (lat/lon) to local North-East-Vertical (NEV) coordinates.
@@ -813,61 +866,7 @@ class SurveyProcess:
         return lats, lons
 
 
-    def _drilled_depths_process(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Process measured depths to assign formation/feature labels to survey points.
 
-        Matches each survey point's measured depth to a corresponding geological feature
-        or formation based on depth intervals. Uses left-closed intervals to ensure
-        consistent feature assignment at boundary depths.
-
-        Args:
-            df: DataFrame containing at minimum:
-                - MeasuredDepth: Survey measured depths
-
-        Returns:
-            pd.DataFrame: Input DataFrame with additional column:
-                - Feature: String identifier of geological feature/formation
-
-        Notes:
-            - Uses self.drilled_depths which must contain:
-                - Interval: Depth ranges for features
-                - Feature: Names/labels for geological features
-            - Intervals are converted to pandas IntervalIndex with left-closed bounds
-            - Points not matching any interval are labeled as 'Unknown'
-            - Each depth point can only belong to one feature interval
-
-        Examples:
-            >>> depths_df = pd.DataFrame({
-            ...     'Interval': [(0, 100), (100, 200)],
-            ...     'Feature': ['Surface', 'Reservoir']
-            ... })
-            >>> survey_df = pd.DataFrame({'MeasuredDepth': [50, 150]})
-            >>> processed = self._drilled_depths_process(survey_df)
-            >>> print(processed['Feature'])
-            0    Surface
-            1    Reservoir
-        """
-        # Convert intervals to left-closed IntervalIndex
-        self.drilled_depths['Interval'] = pd.IntervalIndex(
-            self.drilled_depths['Interval'],
-            closed='left'
-        )
-
-        # Create mapping dictionary from intervals to features
-        interval_to_feature = dict(zip(
-            self.drilled_depths['Interval'],
-            self.drilled_depths['Feature']
-        ))
-
-        # Assign features based on depth intervals
-        df['Feature'] = df['MeasuredDepth'].apply(
-            lambda x: next((interval_to_feature[interval]
-                            for interval in interval_to_feature
-                            if x in interval),
-                           'Unknown')
-        )
-
-        return df
 
     def _main_process(
             self,
@@ -933,8 +932,7 @@ class SurveyProcess:
         utm_vals, latlons = _solve_utm(self.df['MeasuredDepth'], self.start_lat, self.start_lon, min_curve)
 
         # Process tool face angles and create output structure
-        tool_face = _toolface_solve(survey_used)
-        outputs = _create_output_dict(survey_used, min_curve, utm_vals, latlons, tool_face, deg_type)
+        outputs = _create_output_dict(survey_used, min_curve, utm_vals, latlons, deg_type)
         df = pd.DataFrame(outputs)
 
         # Round specified columns
@@ -946,7 +944,6 @@ class SurveyProcess:
         df = df.reset_index(drop=True)
         df['shp_pt'] = df.apply(lambda row: Point(row['Easting'], row['Northing']), axis=1)
         df['point_index'] = df.index
-        df = self._drilled_depths_process(df)
 
         # Organize final column structure
         final_columns = [

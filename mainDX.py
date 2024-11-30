@@ -110,10 +110,9 @@ plats_adjacent['centroid'] = plats_adjacent['centroid'].apply(lambda row: wkt.lo
 # Process survey data and calculate clearances
 dx_df = SurveyProcess(
     df_referenced=dx_df_orig,
-    drilled_depths=df_depths,
     elevation=5515,
     coords_type='latlon'
 )
+df_test = dx_df.drilled_depths_process(dx_df.df_t, df_depths)
 clear_df = ClearanceProcess(dx_df.df_t, plat_df, plats_adjacent)
 processed_dx_df, footages = clear_df.clearance_data, clear_df.whole_df
-print(processed_dx_df)
