@@ -276,38 +276,7 @@ class WellBoreExpanded(String):
 
         # Initialize storage for wellbore relationships
         self.relationships: Dict[str, Any] = {}
-    # def __init__(self, name, top, bottom, max_md_depth, max_tvd_depth, tol=0.0, *args, method="bottom_up", **kwargs):
-    #     """
-    #     Extends the `String` class to include additional parameters: max_md_depth, max_tvd_depth, and tol (top of liner).
-    #
-    #     Parameters
-    #     ----------
-    #     name : str
-    #         The name of the collection.
-    #     top : float
-    #         The shallowest measured depth at the top of the collection of items in meters.
-    #     bottom : float
-    #         The deepest measured depth at the bottom of the collection of items in meters.
-    #     max_md_depth : float
-    #         The maximum measured depth for the wellbore.
-    #     max_tvd_depth : float
-    #         The maximum true vertical depth for the wellbore.
-    #     tol : float, optional
-    #         Top of liner depth, defaults to 0.0.
-    #     method : str, optional
-    #         Method to add sections ('top_down' or 'bottom_up'), by default "bottom_up".
-    #     """
-    #     super().__init__(name, top, bottom, method=method, *args, **kwargs)
-    #     # Assign additional parameters
-    #     self.max_md_depth = float(max_md_depth)
-    #     self.max_tvd_depth = float(max_tvd_depth)
-    #     self.tol = float(tol)  # Top of liner
-    #
-    #     # Validate the new parameters
-    #     self._validate_initial_parameters()
-    #
-    #     # Initialize relationships dictionary
-    #     self.relationships = {}
+
     def _validate_initial_parameters(self) -> NoReturn:
         """Validates the wellbore initialization parameters for type and value constraints.
 
