@@ -43,13 +43,12 @@ Dependencies:
     - pygeomag
     - scipy
 """
-
+from scipy.ndimage import gaussian_filter1d
 import copy
 from welltrajconvert.wellbore_trajectory import *
 from shapely.geometry import Point
 import welleng as we
 from pyproj import Geod, Proj, CRS
-import utm
 import numpy.typing as npt
 import pandas as pd
 import numpy as np
@@ -58,8 +57,9 @@ from datetime import datetime
 from welleng.survey import SurveyHeader
 from pygeomag import GeoMag
 from typing import Optional, Tuple, Dict, Literal
-
-
+from scipy.signal import savgol_filter
+from sklearn.cluster import DBSCAN
+from sklearn.cluster import KMeans
 
 class FastSurveyHeader(SurveyHeader):
     """A fast implementation of SurveyHeader for calculating magnetic field parameters.
@@ -348,47 +348,6 @@ def _solve_utm(md: np.ndarray,
     return (np.array([utm.from_latlon(i[0], i[1])[:2] for i in lst]).astype(int),
             np.array(lst))
 
-def _toolface_solve(survey: Any) -> np.ndarray:
-    """Calculate tool face angles for all survey points in a wellbore trajectory.
-
-    This function computes the tool face angle at each survey point by analyzing
-    the position vectors and survey tool orientation vectors. The tool face angle
-    represents the rotational orientation of the drilling tool around its axis.
-
-    Args:
-        survey: A survey object containing the following attributes:
-            - vec_nev: List/array of orientation vectors in NEV coordinates
-            - pos_nev: List/array of position vectors in NEV coordinates
-
-    Returns:
-        np.ndarray: Array of tool face angles in degrees. The final point's tool
-            face angle is duplicated from the previous point since there is no
-            next position to calculate from.
-
-    Notes:
-        - Tool face angles are calculated using the welleng utility function
-        - Angles are converted from radians to degrees
-        - The last tool face value is repeated for the final survey point
-        - NEV refers to North-East-Vertical coordinate system
-
-    Examples:
-        >>> survey_data = Survey(md=[0,100,200], inc=[0,10,20], azi=[0,45,90])
-        >>> tool_faces = _toolface_solve(survey_data)
-        >>> print(tool_faces)
-        [120.5, 135.2, 135.2]  # Example values
-    """
-    # Extract position and orientation vectors from survey
-    vectors, pos_nev = survey.vec_nev, survey.pos_nev
-
-    # Calculate tool face angles for all points except last
-    tool_face = [math.degrees(we.utils.get_toolface(pos_nev[i],
-                                                    pos_nev[i + 1],
-                                                    vectors[i]))
-                 for i in range(len(pos_nev) - 1)]
-
-    # Return array with duplicated last value
-    return np.array(tool_face + [tool_face[-1]])
-
 def _get_reference_settings(ref_type: Literal['t', 'g']) -> Dict[str, str]:
     """Get reference system settings for survey calculations.
 
@@ -672,19 +631,16 @@ class SurveyProcess:
 
     def __init__(self,
                  df_referenced: pd.DataFrame,
-                 elevation: float = 0,
-                 coords_type: str = 'latlon') -> None:
+                 elevation: float = 0) -> None:
         """Initialize the SurveyProcess class with survey data and processing parameters."""
         # Store initialization parameters
-        self.coords_type = coords_type
         self.elevation = elevation
 
         # Extract starting coordinates
         self.start_lat, self.start_lon = df_referenced[['lat', 'lon']].iloc[0].tolist()
 
-        # Convert coordinates if needed
-        if self.coords_type == 'latlon':
-            df_referenced = self._convert_coords_to_nev(df_referenced)
+        # # Convert coordinates
+        df_referenced = self._convert_coords_to_nev(df_referenced)
 
         # Store starting NEV coordinates
         self.start_n, self.start_e = df_referenced[['n', 'e']].iloc[0].tolist()
@@ -706,8 +662,8 @@ class SurveyProcess:
         self.start_nev = np.array([self.start_n, self.start_e, self.elevation])
 
         # Process data for both true and grid north references
-        self.df_t, self.kop_t, self.prop_azi_t = self._main_process('t')
-        self.df_g, self.kop_g, self.prop_azi_g = self._main_process('g')
+        self.true_dx, self.kop_true, self.prop_azi_true = self._main_process('t')
+        self.grid_dx, self.kop_grid, self.prop_azi_grid = self._main_process('g')
 
     def drilled_depths_process(self, df: pd.DataFrame, drilled_depths: List[float]) -> pd.DataFrame:
         """Process measured depths to assign formation/feature labels to survey points.
@@ -815,59 +771,6 @@ class SurveyProcess:
         return df
 
 
-
-    def _convert_coords_from_nev(self, n: np.ndarray, e: np.ndarray) -> Tuple[List[float], List[float]]:
-        """Convert local North-East-Vertical (NEV) coordinates back to geographic coordinates.
-
-        This method performs the inverse projection from local NEV coordinates back to
-        geographic coordinates (latitude/longitude) using the same azimuthal equidistant
-        projection used for the forward transformation.
-
-        Args:
-            n: Array-like of northing coordinates in US survey feet
-            e: Array-like of easting coordinates in US survey feet
-
-        Returns:
-            Tuple containing:
-                - List[float]: Latitude values in decimal degrees
-                - List[float]: Longitude values in decimal degrees
-
-        Notes:
-            - Uses an Azimuthal Equidistant projection (aeqd)
-            - WGS84 datum is used as the reference ellipsoid
-            - Input coordinates must be in US survey feet
-            - Projection is centered on well's surface location (self.start_lat/lon)
-            - Inverse projection is performed point by point
-
-        Examples:
-            >>> n = [1000.0, 2000.0]
-            >>> e = [500.0, 1000.0]
-            >>> lats, lons = self._convert_coords_from_nev(n, e)
-            >>> print(f"First point: {lats[0]}, {lons[0]}")
-            First point: 40.123, -110.456
-        """
-        # Create point pairs from northing and easting arrays
-        pts = list(zip(n, e))
-
-        # Initialize the same projection used in the forward transformation
-        proj = Proj(proj="aeqd",
-                    datum="WGS84",
-                    lat_0=self.start_lat,
-                    lon_0=self.start_lon,
-                    units="us-ft")
-
-        # Perform inverse projection for each point
-        latlon_points = [proj(e, n, inverse=True) for n, e in pts]
-
-        # Separate latitude and longitude values
-        lats = [i[1] for i in latlon_points]
-        lons = [i[0] for i in latlon_points]
-
-        return lats, lons
-
-
-
-
     def _main_process(
             self,
             ref_type: str
@@ -916,6 +819,7 @@ class SurveyProcess:
 
         # Setup survey header and process kickoff points
         header = _setup_survey_header(north_ref, self.conv_angle)
+        # self.find_kop(self.df_referenced)
         self.kop_lp = self._find_kop_and_lp(self.df_referenced, north_ref, rad_type)
 
         # Combine and clean survey data
@@ -955,6 +859,61 @@ class SurveyProcess:
         df = df.reindex(columns=final_columns)
 
         return df, self.kop_lp, proposed_azimuth
+    def find_kop(self, survey_data, dls_threshold=0.035, smoothing_sigma=2):
+
+        # Ensure input data is sorted by MD
+        # survey_data['DLS'] = np.concatenate(([0], calculate_dls(survey_data)))
+
+        # Moving average of DLS (for smoothing)
+        survey_data['DLS_smooth'] = survey_data['DLS'].rolling(window=3).mean()
+        #
+        # # Calculate the rate of change (derivative) of DLS
+        survey_data['DLS_rate_of_change'] = survey_data['DLS_smooth'].diff()
+        #
+        # # Find the point where the rate of change of DLS is the highest (possible KOP)
+        kop_point = survey_data.iloc[survey_data['DLS_rate_of_change'].idxmax()]
+        print(kop_point)
+        # foo_data = survey_data.values.tolist()
+
+
+        # survey_data = survey_data.sort_values('MeasuredDepth')
+        #
+        # # Calculate derivatives of inclination and azimuth
+        # survey_data['dI_dMD'] = np.gradient(survey_data['Inclination'], survey_data['MeasuredDepth'])
+        # survey_data['dA_dMD'] = np.gradient(survey_data['Azimuth'], survey_data['MeasuredDepth'])
+        #
+        # # Smooth derivatives to reduce noise
+        # survey_data['dI_dMD_smoothed'] = savgol_filter(survey_data['dI_dMD'], window_length=5, polyorder=2)
+        # survey_data['Curvature'] = np.abs(survey_data['dI_dMD_smoothed'])  # Approximation for curvature
+        #
+        # # Identify regions with significant deviation using clustering
+        # features = survey_data[['MeasuredDepth', 'Curvature']].values
+        # kmeans = KMeans(n_clusters=2, random_state=0).fit(features)
+        # survey_data['Cluster'] = kmeans.labels_
+        #
+        # # Determine the transition from cluster 0 (vertical) to cluster 1 (deviation)
+        # kop_cluster = survey_data[survey_data['Cluster'] == 1]
+        # kop_row = kop_cluster.iloc[0]  # First occurrence in the deviation cluster
+        # # # Extract KOP details
+        # kop_md = kop_row['MeasuredDepth']
+        # kop_incl = kop_row['Inclination']
+        # kop_azim = kop_row['Azimuth']
+        survey_data['Smoothed_Inclination'] = gaussian_filter1d(survey_data['Inclination'], sigma=smoothing_sigma)
+
+        # Calculate rate of change in inclination (radians per foot)
+        survey_data['Inclination_Change'] = survey_data['Smoothed_Inclination'].diff() / survey_data['MeasuredDepth'].diff()
+
+        # Calculate Dogleg Severity (approximation for small angles)
+        survey_data['DLS'] = survey_data['Inclination_Change'].abs()
+
+        # Detect KOP where DLS exceeds threshold with sustained trend
+        for i in range(1, len(survey_data)):
+            if survey_data['DLS'].iloc[i] > dls_threshold:
+                # Verify sustained change trend
+                if survey_data['Inclination_Change'].iloc[i] > 0:
+                    print(survey_data['MeasuredDepth'].iloc[i])
+                    return survey_data['MeasuredDepth'].iloc[i]
+        return None  # KOP not found
 
     def _find_kop_and_lp(
             self,
@@ -1019,13 +978,21 @@ class SurveyProcess:
             header=header,
             error_model='ISCWSA MWD Rev4'
         )
+        if len(s.md) < 30:
+            s = s.interpolate_survey(step=100)
 
+        test_result = pd.DataFrame({
+            'MeasuredDepth': s.md,
+            'Inclination': s.inc_rad,
+            'Azimuth': getattr(s, rad_type), 'DLS': s.dls
+        })
+        self.find_kop(test_result)
+        # print(foo)
         # Interpolate survey at 10ft intervals using numpy
         md = np.arange(s.md[0], s.md[-1], 10)
         inc = np.interp(md, s.md, s.inc_rad)
         azi = np.interp(md, s.md, getattr(s, rad_type))
         dls = np.interp(md, s.md, s.dls)
-
         # Primary method: Find KOP and LP using DLS criteria
         kop_index = np.argmax(dls > 1.5)
         lp_index = np.argmax((np.degrees(inc) > 85) & (dls < 1.0))
@@ -1050,7 +1017,7 @@ class SurveyProcess:
             # Find KOP using inclination threshold
             kop_candidates = np.where(inc_deg > DEVIATED_INC_THRESHOLD)[0]
             kop_index = kop_candidates[0]
-
+            print(md[kop_index])
             # Find LP using inclination threshold after KOP
             lp_candidates = np.where(inc_deg[kop_index:] < VERTICAL_INC_THRESHOLD)[0]
             lp_index = kop_index + lp_candidates[0]

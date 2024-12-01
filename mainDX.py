@@ -45,7 +45,7 @@ Notes:
     Handles multiple coordinate reference systems and magnetic corrections.
 """
 
-
+from shapely.geometry import Polygon
 import sqlite3
 from welltrajconvert.wellbore_trajectory import *
 import pandas as pd
@@ -107,12 +107,48 @@ plat_df['centroid'] = plat_df['centroid'].apply(lambda row: wkt.loads(row))
 plats_adjacent['geometry'] = plats_adjacent['geometry'].apply(lambda row: wkt.loads(row))
 plats_adjacent['centroid'] = plats_adjacent['centroid'].apply(lambda row: wkt.loads(row))
 
+survey_data = {
+    'MeasuredDepth': [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000],
+    'Inclination': [0, 5, 15, 45, 85, 89, 89, 89, 89, 89, 89],
+    'Azimuth': [175, 175, 175, 175, 175, 175, 175, 175, 175, 175, 175],
+    'lat': [
+        47.382150, 47.381150, 47.380150, 47.379150,
+        47.378150, 47.377150, 47.376150, 47.375150,
+        47.374150, 47.373150, 47.372150
+    ],
+    'lon': [
+        -102.456789, -102.456789, -102.456789, -102.456789,
+        -102.456789, -102.456789, -102.456789, -102.456789,
+        -102.456789, -102.456789, -102.456789
+    ]
+}
+dx_df_orig = pd.DataFrame(survey_data)
+section1_coords = [
+    (47.383150, -102.457789),
+    (47.383150, -102.455789),
+    (47.381150, -102.455789),
+    (47.381150, -102.457789),
+    (47.383150, -102.457789)
+]
+
+# Section 2 coordinates (1 mile square)
+section2_coords = [
+    (47.381150, -102.457789),
+    (47.381150, -102.455789),
+    (47.379150, -102.455789),
+    (47.379150, -102.457789),
+    (47.381150, -102.457789)
+]
+
+used_plats = {'label': ['section1', 'section2'],'geometry':[Polygon(section1_coords), Polygon(section2_coords)]}
+plat_df = pd.DataFrame(used_plats)
+
 # Process survey data and calculate clearances
 dx_df = SurveyProcess(
     df_referenced=dx_df_orig,
-    elevation=5515,
-    coords_type='latlon'
+    elevation=5515
 )
-df_test = dx_df.drilled_depths_process(dx_df.df_t, df_depths)
-clear_df = ClearanceProcess(dx_df.df_t, plat_df, plats_adjacent)
+
+df_test = dx_df.drilled_depths_process(dx_df.true_dx, df_depths)
+clear_df = ClearanceProcess(dx_df.true_dx, plat_df, plats_adjacent)
 processed_dx_df, footages = clear_df.clearance_data, clear_df.whole_df

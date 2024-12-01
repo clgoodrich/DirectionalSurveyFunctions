@@ -52,10 +52,9 @@ import numpy.typing as npt
 import pandas as pd
 import numpy as np
 import math
+import tabulate
 from typing import Optional, Tuple, Union, TypeVar
-
-
-
+T = TypeVar('T', bound=List[Any])
 
 def _reorganize_lst_points_with_angle(
         lst: List[List[float]],
@@ -272,7 +271,6 @@ def _optimized_corner_process(
 
     return result.tolist()
 
-T = TypeVar('T', bound=List[Any])
 def _remove_dupes_list_of_lists(lst: List[List[T]]) -> List[List[T]]:
     """Removes duplicate sublists while preserving the original order.
 
@@ -490,73 +488,6 @@ def _process_row(
 
     return row
 
-
-def set_non_closest_to_nan(df, closest_to_90, num_segments, dir_val):
-    # Create arrays of column names
-    cols_prefix = ['distance', 'closest_surface_point', 'intersection_angle', 'segments']
-    cols_to_nan = []
-
-    # Generate all column names that need to be set to NaN
-    for prefix in cols_prefix:
-        for i in range(1, num_segments + 1):
-            if i != closest_to_90 + 1:
-                cols_to_nan.append(f'{prefix}{i}_{dir_val}')
-
-    # Set all identified columns to NaN in one operation
-    df[cols_to_nan] = np.nan
-
-    return df
-
-def process_results_vectorized_pandas(all_results_dicts, well_trajectory, segments, dir_val):
-    # Create base DataFrame
-    base_df = pd.DataFrame({
-        'point_index': range(len(well_trajectory)),
-        'well_point': list(well_trajectory)
-    })
-
-    # Process each segment's results
-    for i, results in enumerate(all_results_dicts):
-        seg_num = i + 1
-
-        # Create segment specific DataFrame
-        segment_data = pd.DataFrame({
-            f'distance{seg_num}_{dir_val}': [round(r['distance'] / 0.3048, 2) for r in results],
-            f'closest_surface_point{seg_num}_{dir_val}': [r['closest_surface_point'] for r in results],
-            f'intersection_angle{seg_num}_{dir_val}': [r['intersection_angle'] for r in results],
-            f'segments{seg_num}_{dir_val}': [segments[i]] * len(results)
-        })
-
-        # Combine with base DataFrame
-        base_df = pd.concat([base_df, segment_data], axis=1)
-    return base_df
-    # return base_df.to_dict('records')
-
-
-def process_clearance_results_pandas(well_trajectory_points, segments, dir_val):
-    # Create base DataFrame
-    base_df = pd.DataFrame({
-        'point_index': range(len(well_trajectory_points)),
-        'well_point': list(well_trajectory_points)
-    })
-
-    # Process each segment
-    for i, segment in enumerate(segments):
-        results = _calculate_well_to_line_clearance_detailed(well_trajectory_points, segment)
-
-        # Create segment-specific columns
-        segment_data = pd.DataFrame({
-            f'distance{i + 1}_{dir_val}': [round(r['distance'] / 0.3048, 2) for r in results],
-            f'closest_surface_point{i + 1}_{dir_val}': [r['closest_surface_point'] for r in results],
-            f'intersection_angle{i + 1}_{dir_val}': [r['intersection_angle'] for r in results],
-            f'segments{i + 1}_{dir_val}': [segment] * len(results)
-        })
-
-        # Add to base DataFrame
-        base_df = pd.concat([base_df, segment_data], axis=1)
-
-    return base_df.to_dict('records')
-
-
 def _results_finder(
         segments: List[List[float]],
         dir_val: str,
@@ -654,7 +585,6 @@ def _results_finder(
 
     # Combine with well point information
     return pd.concat([df[['point_index', 'well_point']], consolidated_df], axis=1)
-
 
 def _regular_corner_class(
         corners: List[List[float]],
@@ -945,7 +875,6 @@ class ClearanceProcess:
         self.whole_df = pd.DataFrame()
 
         # Process clearance data
-        # analyzeTimeNoArgs(self._main_clearance)
         self.clearance_data = self._main_clearance()
 
         # Extract used concentration values
@@ -978,10 +907,7 @@ class ClearanceProcess:
             IndexError: When plat geometry is missing for a concentration
         """
         # Process each unique concentration
-        # time2 = time.perf_counter()
-        # sum_time += (time2 - time1)
-        # print(time2 - time1)
-        # print('sum_time', sum_time)
+
         for i in range(len(self.all_polygons_concs)):
             # Extract trajectory points for current concentration
             well_traj = self.df[self.df['Conc'] == self.all_polygons_concs[i]]
@@ -999,10 +925,8 @@ class ClearanceProcess:
 
             # Generate directional boundary segments
             right_lst_segments, left_lst_segments, up_lst_segments, down_lst_segments = _id_sides(used_poly)
-            # Calculate distances to each boundary
-            # analyzeTime2(_results_finder, [left_lst_segments, 'West', well_trajectory])
-            #
 
+            # Calculate distances to each boundary
             left_df = _results_finder(left_lst_segments, 'West', well_trajectory)
             right_df = _results_finder(right_lst_segments, 'East', well_trajectory)
             down_df = _results_finder(down_lst_segments, 'South', well_trajectory)
