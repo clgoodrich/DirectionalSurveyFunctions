@@ -149,6 +149,8 @@ dx_df = SurveyProcess(
     elevation=5515
 )
 
+kop = dx_df.find_kop(dx_df.true_dx)
+print('kop', kop)
 df_test = dx_df.drilled_depths_process(dx_df.true_dx, df_depths)
-clear_df = ClearanceProcess(dx_df.true_dx, plat_df, plats_adjacent)
-processed_dx_df, footages = clear_df.clearance_data, clear_df.whole_df
+# clear_df = ClearanceProcess(dx_df.true_dx, plat_df, plats_adjacent)
+# processed_dx_df, footages = clear_df.clearance_data, clear_df.whole_df

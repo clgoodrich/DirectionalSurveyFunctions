@@ -43,6 +43,7 @@ Dependencies:
     - pygeomag
     - scipy
 """
+from pandas import Series, DataFrame
 from scipy.ndimage import gaussian_filter1d
 import copy
 from welltrajconvert.wellbore_trajectory import *
@@ -56,7 +57,7 @@ import math
 from datetime import datetime
 from welleng.survey import SurveyHeader
 from pygeomag import GeoMag
-from typing import Optional, Tuple, Dict, Literal
+from typing import Optional, Tuple, Dict, Literal, Any
 from scipy.signal import savgol_filter
 from sklearn.cluster import DBSCAN
 from sklearn.cluster import KMeans
@@ -662,8 +663,8 @@ class SurveyProcess:
         self.start_nev = np.array([self.start_n, self.start_e, self.elevation])
 
         # Process data for both true and grid north references
-        self.true_dx, self.kop_true, self.prop_azi_true = self._main_process('t')
-        self.grid_dx, self.kop_grid, self.prop_azi_grid = self._main_process('g')
+        self.true_dx, self.prop_azi_true = self._main_process('t')
+        self.grid_dx, self.prop_azi_grid = self._main_process('g')
 
     def drilled_depths_process(self, df: pd.DataFrame, drilled_depths: List[float]) -> pd.DataFrame:
         """Process measured depths to assign formation/feature labels to survey points.
@@ -774,7 +775,7 @@ class SurveyProcess:
     def _main_process(
             self,
             ref_type: str
-    ) -> Tuple[pd.DataFrame, pd.DataFrame, float]:
+    ) -> tuple[Any, Any]:
         """Execute main well trajectory processing pipeline.
 
         Processes survey data through multiple stages including survey creation,
@@ -820,11 +821,11 @@ class SurveyProcess:
         # Setup survey header and process kickoff points
         header = _setup_survey_header(north_ref, self.conv_angle)
         # self.find_kop(self.df_referenced)
-        self.kop_lp = self._find_kop_and_lp(self.df_referenced, north_ref, rad_type)
+        # self.kop_lp = self._find_kop_and_lp(self.df_referenced, north_ref, rad_type)
 
         # Combine and clean survey data
-        self.df = pd.concat([self.df_referenced, self.kop_lp], ignore_index=True)
-        self.df = self.df.drop_duplicates(subset='MeasuredDepth', keep='first')
+        # self.df = pd.concat([self.df_referenced, self.kop_lp], ignore_index=True)
+        self.df = self.df_referenced.drop_duplicates(subset='MeasuredDepth', keep='first')
         self.df = self.df.sort_values('MeasuredDepth').reset_index(drop=True)
 
         # Process survey calculations
@@ -841,7 +842,7 @@ class SurveyProcess:
 
         # Round specified columns
         df[columns_to_round] = df[columns_to_round].round(2)
-        init_md = self.df['MeasuredDepth'].tolist() + self.kop_lp['MeasuredDepth'].tolist()
+        init_md = self.df['MeasuredDepth'].tolist()# + self.kop_lp['MeasuredDepth'].tolist()
         df = df[df['MeasuredDepth'].isin(init_md)]
 
         # Add shape points and process indices
@@ -858,8 +859,8 @@ class SurveyProcess:
         ]
         df = df.reindex(columns=final_columns)
 
-        return df, self.kop_lp, proposed_azimuth
-    def find_kop(self, survey_data, dls_threshold=0.035, smoothing_sigma=2):
+        return df, proposed_azimuth
+    def find_kop2(self, survey_data, dls_threshold=0.035, smoothing_sigma=2):
 
         # Ensure input data is sorted by MD
         # survey_data['DLS'] = np.concatenate(([0], calculate_dls(survey_data)))
@@ -914,6 +915,54 @@ class SurveyProcess:
                     print(survey_data['MeasuredDepth'].iloc[i])
                     return survey_data['MeasuredDepth'].iloc[i]
         return None  # KOP not found
+    def find_lp(self, survey_data):
+        md = survey_data['MeasuredDepth'].values
+        inc = survey_data['Inclination'].values
+        azi = survey_data['Azimuth'].values
+        dls = survey_data['DogLegSeverity'].values
+
+
+    def find_kop(self, survey_data):
+        def is_valid_number(x: float) -> bool:
+            """Validate numeric values."""
+            return pd.notnull(x) and np.isreal(x) and x > 0
+
+        print(solve_inclination(survey_data))
+        md = survey_data['MeasuredDepth'].values
+        inc = survey_data['Inclination'].values
+        azi = survey_data['Azimuth'].values
+        dls = survey_data['DogLegSeverity'].values
+
+        # # Primary method: Find KOP using DLS criteria
+        kop_index = np.argmax(dls > 1.5)
+
+        # # Create result DataFrame
+        result = pd.DataFrame({
+            'MeasuredDepth': [md[kop_index]],
+            'Inclination': [inc[kop_index]],
+            'Azimuth': [azi[kop_index]],
+            'Point': ['KOP']
+        })
+        # Fallback method if primary method fails validation
+        invalid_x = result[~result['MeasuredDepth'].apply(is_valid_number)]
+        if not invalid_x.empty:
+            DEVIATED_INC_THRESHOLD = 5.0  # Degrees
+
+            # Reinterpolate survey data
+            inc_deg = np.degrees(inc)
+
+            # Find KOP using inclination threshold
+            kop_candidates = np.where(inc_deg > DEVIATED_INC_THRESHOLD)[0]
+            kop_index = kop_candidates[0]
+            # Create new result DataFrame
+            result = pd.DataFrame({
+                'MeasuredDepth': [md[kop_index]],
+                'Inclination': [np.radians(inc_deg[kop_index])],
+                'Azimuth': [azi[kop_index]],
+                'Point': ['KOP']
+            })
+        return result[['MeasuredDepth', 'Inclination', 'Azimuth', 'Point']]
+
 
     def _find_kop_and_lp(
             self,
@@ -981,13 +1030,12 @@ class SurveyProcess:
         if len(s.md) < 30:
             s = s.interpolate_survey(step=100)
 
-        test_result = pd.DataFrame({
-            'MeasuredDepth': s.md,
-            'Inclination': s.inc_rad,
-            'Azimuth': getattr(s, rad_type), 'DLS': s.dls
-        })
-        self.find_kop(test_result)
-        # print(foo)
+        # test_result = pd.DataFrame({
+        #     'MeasuredDepth': s.md,
+        #     'Inclination': s.inc_rad,
+        #     'Azimuth': getattr(s, rad_type), 'DLS': s.dls
+        # })
+        # self.find_kop(test_result)
         # Interpolate survey at 10ft intervals using numpy
         md = np.arange(s.md[0], s.md[-1], 10)
         inc = np.interp(md, s.md, s.inc_rad)
@@ -1031,3 +1079,124 @@ class SurveyProcess:
             })
 
         return result[['MeasuredDepth', 'Inclination', 'Azimuth', 'Point']]
+
+
+# def detect_angle_units(survey_data):
+#     """
+#     Detect whether inclination and azimuth values are in degrees or radians
+#
+#     Parameters:
+#     survey_data: DataFrame with columns ['MD', 'Inclination', 'Azimuth']
+#
+#     Returns:
+#     dict: Contains unit determination and confidence level
+#     """
+#     print(survey_data)
+#     inc_values = survey_data['Inclination'].values
+#
+#     # Initialize confidence counters
+#     radian_evidence = 0
+#     degree_evidence = 0
+#
+#     # Check 1: Values greater than 2π (6.28...) strongly suggest degrees
+#     if np.any(inc_values > 2 * np.pi):
+#         print('foo')
+#         degree_evidence += 3
+#
+#     # Check 2: Values greater than π (3.14...) in inclination suggest degrees
+#     if np.any(inc_values > np.pi):
+#         degree_evidence += 2
+#
+#     # Check 3: Typical inclination range check
+#     inc_max = np.max(inc_values)
+#     if 0 <= inc_max <= np.pi:
+#         radian_evidence += 1
+#     elif 0 <= inc_max <= 180:
+#         degree_evidence += 1
+#
+#     # Check 5: Precision/step size check
+#     inc_steps = np.diff(np.sort(np.unique(inc_values)))
+#     if len(inc_steps) > 0:
+#         avg_step = np.mean(inc_steps)
+#         if 0.001 <= avg_step <= 0.1:  # Typical radian steps
+#             radian_evidence += 1
+#         elif 0.1 <= avg_step <= 5:  # Typical degree steps
+#             degree_evidence += 1
+#
+#     # Make determination
+#     unit_type = 'radians' if radian_evidence > degree_evidence else 'degrees'
+#     confidence = abs(radian_evidence - degree_evidence)
+#
+#     result = {
+#         'unit_type': unit_type,
+#         'confidence': confidence,
+#         'radian_evidence': radian_evidence,
+#         'degree_evidence': degree_evidence
+#     }
+#     print(result)
+#     return result
+
+def solve_inclination(df):
+    """
+    Solve for inclination given MD, dog leg, RF, and TVD
+
+    Parameters:
+    df: DataFrame with columns ['MD', 'DogLeg', 'RF', 'TVD']
+
+    Returns:
+    DataFrame with added Inclination column
+    """
+    df = df.copy()
+    inclination = np.zeros(len(df))
+
+    # First point is typically vertical (0 inclination)
+    inclination[0] = 0
+    for idx, row in df.iterrows():
+        delta_md = row['MeasuredDepth'][idx] - df['MeasuredDepth'].iloc[i - 1]
+        print(df.iloc[idx])
+
+    for i in range(1, len(df)):
+        print(df['MeasuredDepth'].iloc[i])
+        delta_md = df['MeasuredDepth'].iloc[i] - df['MeasuredDepth'].iloc[i - 1]
+        delta_tvd = df['TVD'].iloc[i] - df['TVD'].iloc[i - 1]
+        rf = df['RatioFactor'].iloc[i]
+        dog_leg = df['DogLegSeverity'].iloc[i]
+
+        # We know that:
+        # delta_tvd = delta_md * ((cos(inc1) + cos(inc2))/2) * RF
+        # where inc1 is known (previous inclination)
+        # Solve for inc2 using iterative method
+
+        inc1 = inclination[i - 1]
+
+        def objective_function(inc2):
+            return (delta_md * ((np.cos(inc1) + np.cos(inc2)) / 2) * rf) - delta_tvd
+
+        # Initial guess for inc2
+        inc2_guess = inc1 + dog_leg
+
+        # Newton-Raphson method
+        max_iter = 100
+        tolerance = 1e-6
+        inc2 = inc2_guess
+
+        for _ in range(max_iter):
+            f = objective_function(inc2)
+            # Derivative of objective function with respect to inc2
+            df = -delta_md * rf * np.sin(inc2) / 2
+
+            if abs(df) < 1e-10:  # Avoid division by zero
+                break
+
+            inc2_new = inc2 - f / df
+
+            if abs(inc2_new - inc2) < tolerance:
+                inc2 = inc2_new
+                break
+
+            inc2 = inc2_new
+
+        inclination[i] = inc2
+
+    df['Inclination'] = inclination
+    return df
