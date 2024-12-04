@@ -468,7 +468,12 @@ def _create_survey(
         header=header,
         error_model='ISCWSA MWD Rev4'
     )
-    if len(df) < 30:
+    max_depth = df['MeasuredDepth'].max()
+    depth_ratio = max_depth/50
+    # print(len(df), depth_ratio)
+    # print(max_depth)
+    # print(foo)
+    if len(df) < depth_ratio:
         survey = survey.interpolate_survey(step=50)
         # df = we.survey.survey_to_df(survey)
         df = pd.DataFrame({
@@ -829,11 +834,8 @@ class SurveyProcess:
 
         # Setup survey header and process kickoff points
         header = _setup_survey_header(north_ref, self.conv_angle)
-        # self.find_kop(self.df_referenced)
-        # self.kop_lp = self._find_kop_and_lp(self.df_referenced, north_ref, rad_type)
 
         # Combine and clean survey data
-        # self.df = pd.concat([self.df_referenced, self.kop_lp], ignore_index=True)
         self.df = self.df_referenced.drop_duplicates(subset='MeasuredDepth', keep='first')
         self.df = self.df.sort_values('MeasuredDepth').reset_index(drop=True)
 
@@ -868,64 +870,63 @@ class SurveyProcess:
         df = df.reindex(columns=final_columns)
 
         return df, proposed_azimuth
-    def find_kop2(self, survey_data, dls_threshold=0.035, smoothing_sigma=2):
-
-        # Ensure input data is sorted by MD
-        # survey_data['DLS'] = np.concatenate(([0], calculate_dls(survey_data)))
-
-        # Moving average of DLS (for smoothing)
-        survey_data['DLS_smooth'] = survey_data['DLS'].rolling(window=3).mean()
-        #
-        # # Calculate the rate of change (derivative) of DLS
-        survey_data['DLS_rate_of_change'] = survey_data['DLS_smooth'].diff()
-        #
-        # # Find the point where the rate of change of DLS is the highest (possible KOP)
-        kop_point = survey_data.iloc[survey_data['DLS_rate_of_change'].idxmax()]
-        # foo_data = survey_data.values.tolist()
-
-
-        # survey_data = survey_data.sort_values('MeasuredDepth')
-        #
-        # # Calculate derivatives of inclination and azimuth
-        # survey_data['dI_dMD'] = np.gradient(survey_data['Inclination'], survey_data['MeasuredDepth'])
-        # survey_data['dA_dMD'] = np.gradient(survey_data['Azimuth'], survey_data['MeasuredDepth'])
-        #
-        # # Smooth derivatives to reduce noise
-        # survey_data['dI_dMD_smoothed'] = savgol_filter(survey_data['dI_dMD'], window_length=5, polyorder=2)
-        # survey_data['Curvature'] = np.abs(survey_data['dI_dMD_smoothed'])  # Approximation for curvature
-        #
-        # # Identify regions with significant deviation using clustering
-        # features = survey_data[['MeasuredDepth', 'Curvature']].values
-        # kmeans = KMeans(n_clusters=2, random_state=0).fit(features)
-        # survey_data['Cluster'] = kmeans.labels_
-        #
-        # # Determine the transition from cluster 0 (vertical) to cluster 1 (deviation)
-        # kop_cluster = survey_data[survey_data['Cluster'] == 1]
-        # kop_row = kop_cluster.iloc[0]  # First occurrence in the deviation cluster
-        # # # Extract KOP details
-        # kop_md = kop_row['MeasuredDepth']
-        # kop_incl = kop_row['Inclination']
-        # kop_azim = kop_row['Azimuth']
-        survey_data['Smoothed_Inclination'] = gaussian_filter1d(survey_data['Inclination'], sigma=smoothing_sigma)
-
-        # Calculate rate of change in inclination (radians per foot)
-        survey_data['Inclination_Change'] = survey_data['Smoothed_Inclination'].diff() / survey_data['MeasuredDepth'].diff()
-
-        # Calculate Dogleg Severity (approximation for small angles)
-        survey_data['DLS'] = survey_data['Inclination_Change'].abs()
-
-        # Detect KOP where DLS exceeds threshold with sustained trend
-        for i in range(1, len(survey_data)):
-            if survey_data['DLS'].iloc[i] > dls_threshold:
-                # Verify sustained change trend
-                if survey_data['Inclination_Change'].iloc[i] > 0:
-                    return survey_data['MeasuredDepth'].iloc[i]
-        return None  # KOP not found
-    def find_lp(self, survey_data):
-        md = survey_data['MeasuredDepth'].values
-        inc = survey_data['Inclination'].values
-        azi = survey_data['Azimuth'].values
-        dls = survey_data['DogLegSeverity'].values
+    # def find_kop2(self, survey_data, dls_threshold=0.035, smoothing_sigma=2):
+    #
+    #     # Ensure input data is sorted by MD
+    #
+    #     # Moving average of DLS (for smoothing)
+    #     survey_data['DLS_smooth'] = survey_data['DLS'].rolling(window=3).mean()
+    #     #
+    #     # # Calculate the rate of change (derivative) of DLS
+    #     survey_data['DLS_rate_of_change'] = survey_data['DLS_smooth'].diff()
+    #     #
+    #     # # Find the point where the rate of change of DLS is the highest (possible KOP)
+    #     kop_point = survey_data.iloc[survey_data['DLS_rate_of_change'].idxmax()]
+    #     # foo_data = survey_data.values.tolist()
+    #
+    #
+    #     # survey_data = survey_data.sort_values('MeasuredDepth')
+    #     #
+    #     # # Calculate derivatives of inclination and azimuth
+    #     # survey_data['dI_dMD'] = np.gradient(survey_data['Inclination'], survey_data['MeasuredDepth'])
+    #     # survey_data['dA_dMD'] = np.gradient(survey_data['Azimuth'], survey_data['MeasuredDepth'])
+    #     #
+    #     # # Smooth derivatives to reduce noise
+    #     # survey_data['dI_dMD_smoothed'] = savgol_filter(survey_data['dI_dMD'], window_length=5, polyorder=2)
+    #     # survey_data['Curvature'] = np.abs(survey_data['dI_dMD_smoothed'])  # Approximation for curvature
+    #     #
+    #     # # Identify regions with significant deviation using clustering
+    #     # features = survey_data[['MeasuredDepth', 'Curvature']].values
+    #     # kmeans = KMeans(n_clusters=2, random_state=0).fit(features)
+    #     # survey_data['Cluster'] = kmeans.labels_
+    #     #
+    #     # # Determine the transition from cluster 0 (vertical) to cluster 1 (deviation)
+    #     # kop_cluster = survey_data[survey_data['Cluster'] == 1]
+    #     # kop_row = kop_cluster.iloc[0]  # First occurrence in the deviation cluster
+    #     # # # Extract KOP details
+    #     # kop_md = kop_row['MeasuredDepth']
+    #     # kop_incl = kop_row['Inclination']
+    #     # kop_azim = kop_row['Azimuth']
+    #     survey_data['Smoothed_Inclination'] = gaussian_filter1d(survey_data['Inclination'], sigma=smoothing_sigma)
+    #
+    #     # Calculate rate of change in inclination (radians per foot)
+    #     survey_data['Inclination_Change'] = survey_data['Smoothed_Inclination'].diff() / survey_data['MeasuredDepth'].diff()
+    #
+    #     # Calculate Dogleg Severity (approximation for small angles)
+    #     survey_data['DLS'] = survey_data['Inclination_Change'].abs()
+    #
+    #     # Detect KOP where DLS exceeds threshold with sustained trend
+    #     for i in range(1, len(survey_data)):
+    #         if survey_data['DLS'].iloc[i] > dls_threshold:
+    #             # Verify sustained change trend
+    #             if survey_data['Inclination_Change'].iloc[i] > 0:
+    #                 return survey_data['MeasuredDepth'].iloc[i]
+    #     return None  # KOP not found
+    # def find_lp(self, survey_data):
+    #     md = survey_data['MeasuredDepth'].values
+    #     inc = survey_data['Inclination'].values
+    #     azi = survey_data['Azimuth'].values
+    #     dls = survey_data['DogLegSeverity'].values
 
 
     def find_kop(self, survey_data):
@@ -954,6 +955,7 @@ class SurveyProcess:
             DEVIATED_INC_THRESHOLD = 5.0  # Degrees
             # Reinterpolate survey data
             inc_deg = np.degrees(inc)
+            print(inc_deg)
             # Find KOP using inclination threshold
             kop_candidates = np.where(inc_deg > DEVIATED_INC_THRESHOLD)[0]
             kop_index = kop_candidates[0]
@@ -965,6 +967,43 @@ class SurveyProcess:
                 'Point': ['KOP']
             })
         return result[['MeasuredDepth', 'Inclination', 'Azimuth', 'Point']]
+
+    def find_kick_off_point(self, survey_data):
+        """
+        Identify the kick-off point in a wellbore directional survey.
+
+        Args:
+            survey_data (pd.DataFrame): Survey data with columns:
+                - MeasuredDepth (MD): Measured depth (ft)
+                - Inclination: Inclination angle (radians)
+                - Azimuth: Azimuth angle (radians)
+                - DLS: Dogleg severity (deg/100ft)
+                - TVD: True vertical depth (ft)
+
+        Returns:
+            dict: Information about the kick-off point:
+                - MD (ft): Measured depth at the kick-off point
+                - TVD (ft): True vertical depth at the kick-off point
+                - Inclination (radians): Inclination at the kick-off point
+        """
+        # Ensure data is sorted by Measured Depth
+        survey_data = survey_data.sort_values(by="MeasuredDepth").reset_index(drop=True)
+
+        # Calculate the rate of change of inclination (1st derivative w.r.t MD)
+        survey_data["dInc_dMD"] = np.gradient(survey_data["Inclination"], survey_data["MeasuredDepth"])
+
+        # Identify the first significant increase in inclination (KOP)
+        # This is the first point where inclination derivative becomes consistently positive
+        kick_off_point_idx = survey_data[survey_data["dInc_dMD"] > 0].index[0]
+
+        # Extract the corresponding data
+        kick_off_point = survey_data.iloc[kick_off_point_idx]
+        kick_off_point = pd.DataFrame({
+            "MD": [kick_off_point["MeasuredDepth"]],
+            "Inclination": [kick_off_point["Inclination"]],
+            "Azimuth": [kick_off_point["Azimuth"]],
+            "Point": ["KOP"]})
+        return kick_off_point
 
     def find_landing_point(self, survey_data, target_inclination=np.pi / 2, tol=0.02):
         """

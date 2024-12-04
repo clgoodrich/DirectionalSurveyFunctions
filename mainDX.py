@@ -282,9 +282,13 @@ CASE
     for group_name, group_data in grouped:
         slants = group_data['Slant'].unique()
         group_data = group_data.drop(columns=['Slant'])
-        # if 'VERTICAL' not in slants:
-        #
-        if '4301354249' not in group_name and 'VERTICAL' not in slants:
+        # print(group_data)
+        max_x = group_data['X'].iloc[0] - group_data['X'].iloc[-1]
+        max_y = group_data['Y'].iloc[0] - group_data['Y'].iloc[-1]
+        max_distance = (max_x**2 + max_y**2)**0.5
+        # max_inc = group_data['Inclination'].max()
+        # print('max_inc', max_inc, max_distance)
+        if '4301354249' not in group_name and 'VERTICAL' not in slants and max_distance  > 20:
         # if group_name == ('4301354249', 'Planned') and 'VERTICAL' not in slants:
             group_data = group_data.drop_duplicates(keep="first")
             print(group_name, counter, f"""/""", total_things)
@@ -295,43 +299,25 @@ CASE
             dx_df_test = SurveyProcess(
                 df_referenced=new_df,
                 elevation=elevation)
-
             try:
-                kop_test = dx_df_test.find_kop(dx_df_test.true_dx)
+                # kop_test = dx_df_test.find_kop(dx_df_test.true_dx)
+                kop_test = dx_df_test.find_kick_off_point(dx_df_test.true_dx)
                 lp_test = dx_df_test.find_landing_point(dx_df_test.true_dx)
             except IndexError:
                 print(slants)
                 print(counter)
-                print(group_data)
+                print(dx_df_test.true_dx)
                 print(foo)
         counter += 1
-        # utm_proj = f'+proj=utm +zone={12} +{'N'} +ellps=WGS84 +datum=WGS84 +units=m +no_defs'
-        # print(utm_proj)
-        # # Create projection transformers
-        # utm_to_wgs84 = pyproj.Transformer.from_proj(
-        #     pyproj.Proj(utm_proj),
-        #     pyproj.Proj('+proj=longlat +datum=WGS84 +no_defs'),
-        #     always_xy=True
-        # )
-        #
-        # # Convert coordinates
-        # lons, lats = utm_to_wgs84.transform(
-        #     i['Easting'].values,
-        #     i['Northing'].values
-        # )
 
-        # Add new columns to dataframe
-        # df['Longitude'] = lons
-        # df['Latitude'] = lats
-        # print(df)
 
 
 # Configure pandas display options
 pd.set_option('display.max_columns', None)  # Show all columns when displaying DataFrames
 pd.options.mode.chained_assignment = None  # Suppress chained assignment warnings
 
-processAllData()
-print(foo)
+# processAllData()
+# print(foo)
 # Initialize database connection
 conn_sample = sqlite3.connect('DX_sample.db')
 
@@ -354,53 +340,54 @@ plat_df['centroid'] = plat_df['centroid'].apply(lambda row: wkt.loads(row))
 plats_adjacent['geometry'] = plats_adjacent['geometry'].apply(lambda row: wkt.loads(row))
 plats_adjacent['centroid'] = plats_adjacent['centroid'].apply(lambda row: wkt.loads(row))
 
-# survey_data = {
-#     'MeasuredDepth': [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000],
-#     'Inclination': [0, 5, 15, 45, 85, 89, 89, 89, 89, 89, 89],
-#     'Azimuth': [175, 175, 175, 175, 175, 175, 175, 175, 175, 175, 175],
-#     'lat': [
-#         47.382150, 47.381150, 47.380150, 47.379150,
-#         47.378150, 47.377150, 47.376150, 47.375150,
-#         47.374150, 47.373150, 47.372150
-#     ],
-#     'lon': [
-#         -102.456789, -102.456789, -102.456789, -102.456789,
-#         -102.456789, -102.456789, -102.456789, -102.456789,
-#         -102.456789, -102.456789, -102.456789
-#     ]
-# }
-# dx_df_orig = pd.DataFrame(survey_data)
-# section1_coords = [
-#     (47.383150, -102.457789),
-#     (47.383150, -102.455789),
-#     (47.381150, -102.455789),
-#     (47.381150, -102.457789),
-#     (47.383150, -102.457789)
-# ]
-#
-# # Section 2 coordinates (1 mile square)
-# section2_coords = [
-#     (47.381150, -102.457789),
-#     (47.381150, -102.455789),
-#     (47.379150, -102.455789),
-#     (47.379150, -102.457789),
-#     (47.381150, -102.457789)
-# ]
-# # search_py_files_for_kop(r"C:\Work\RewriteAPD")
-#
-# used_plats = {'label': ['section1', 'section2'],'geometry':[Polygon(section1_coords), Polygon(section2_coords)]}
-# plat_df = pd.DataFrame(used_plats)
+survey_data = {
+    'MeasuredDepth': [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000],
+    'Inclination': [0, 5, 15, 45, 85, 89, 89, 89, 89, 89, 89],
+    'Azimuth': [175, 175, 175, 175, 175, 175, 175, 175, 175, 175, 175],
+    'lat': [
+        47.382150, 47.381150, 47.380150, 47.379150,
+        47.378150, 47.377150, 47.376150, 47.375150,
+        47.374150, 47.373150, 47.372150
+    ],
+    'lon': [
+        -102.456789, -102.456789, -102.456789, -102.456789,
+        -102.456789, -102.456789, -102.456789, -102.456789,
+        -102.456789, -102.456789, -102.456789
+    ]
+}
+dx_df_orig = pd.DataFrame(survey_data)
+section1_coords = [
+    (47.383150, -102.457789),
+    (47.383150, -102.455789),
+    (47.381150, -102.455789),
+    (47.381150, -102.457789),
+    (47.383150, -102.457789)
+]
 
+# Section 2 coordinates (1 mile square)
+section2_coords = [
+    (47.381150, -102.457789),
+    (47.381150, -102.455789),
+    (47.379150, -102.455789),
+    (47.379150, -102.457789),
+    (47.381150, -102.457789)
+]
+# search_py_files_for_kop(r"C:\Work\RewriteAPD")
+
+used_plats = {'Conc': ['section1', 'section2'],'geometry':[Polygon(section1_coords), Polygon(section2_coords)]}
+plat_df = pd.DataFrame(used_plats)
+print(plat_df)
 # Process survey data and calculate clearances
-print(dx_df_orig)
 dx_df = SurveyProcess(
     df_referenced=dx_df_orig,
     elevation=5515)
+# plat_df = plat_df.drop(columns=['centroid', 'label'])
 
-kop = dx_df.find_kop(dx_df.true_dx)
+kop = dx_df.find_kick_off_point(dx_df.true_dx)
 lp = dx_df.find_landing_point(dx_df.true_dx)
 print('kop', kop)
 print('lp', lp)
 df_test = dx_df.drilled_depths_process(dx_df.true_dx, df_depths)
-# clear_df = ClearanceProcess(dx_df.true_dx, plat_df, plats_adjacent)
-# processed_dx_df, footages = clear_df.clearance_data, clear_df.whole_df
+clear_df = ClearanceProcess(dx_df.true_dx, plat_df, plats_adjacent)
+processed_dx_df, footages = clear_df.clearance_data, clear_df.whole_df
+print(processed_dx_df)

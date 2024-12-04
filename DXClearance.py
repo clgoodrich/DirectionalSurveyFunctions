@@ -863,11 +863,11 @@ class ClearanceProcess:
         # Store input DataFrames
         self.df = df_used
         self.plats = df_plat
-        self.adjacent_plats = adjacent_plats
+        # self.adjacent_plats = adjacent_plats
 
         # Calculate concentrations for each survey point
         self.df['Conc'] = self.df['shp_pt'].apply(self._find_conc)
-
+        print(self.df)
         # Extract unique concentration values
         self.all_polygons_concs = df_used['Conc'].unique()
 
@@ -944,7 +944,6 @@ class ClearanceProcess:
             all_data = pd.merge(up_down, left_right, on='point_index')
             all_data = all_data.drop(columns=['well_point_x_y'])
             all_data = all_data.rename(columns={'well_point_x_x': 'well_point'})
-
             # Accumulate results
             self.whole_df = pd.concat([all_data, self.whole_df]).reset_index(drop=True)
 
@@ -987,7 +986,11 @@ class ClearanceProcess:
             - Depends on adjacent_plats DataFrame having 'geometry' and 'Conc' columns
         """
         # Iterate through adjacent plats to find containing polygon
-        for idx, row in self.adjacent_plats.iterrows():
+        # for idx, row in self.adjacent_plats.iterrows():
+        #     if row['geometry'].contains(point):
+        #         return row['Conc']
+        for idx, row in self.plats.iterrows():
+            print(row['geometry'], point)
             if row['geometry'].contains(point):
                 return row['Conc']
 
