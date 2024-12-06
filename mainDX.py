@@ -44,14 +44,26 @@ Notes:
     Requires specific DataFrame structures for both survey and plat data.
     Handles multiple coordinate reference systems and magnetic corrections.
 """
+import sqlite3
+from welltrajconvert.wellbore_trajectory import *
+from shapely import wkt
+from DXClearance import ClearanceProcess
+from DXSurveys import SurveyProcess
+import pandas as pd
+import time
 
-from shapely.geometry import Polygon
+import polars as pl
+import pyproj
+import shapely
+from shapely.geometry import Polygon, Point
 import sqlite3
 from welltrajconvert.wellbore_trajectory import *
 import pandas as pd
 from shapely import wkt
 from DXClearance import ClearanceProcess
 from DXSurveys import SurveyProcess
+
+
 
 """Main directional drilling data processing script. This is an example of using the process, 
 and is attached with an example well
@@ -66,7 +78,6 @@ Dependencies:
     - shapely.wkt
     - custom modules (SurveyProcess, ClearanceProcess)
 """
-
 def dict_to_interval(d: Union[str, dict]) -> pd.Interval:
     """Converts dictionary or JSON string to pandas Interval object.
 
@@ -80,77 +91,70 @@ def dict_to_interval(d: Union[str, dict]) -> pd.Interval:
     d = json.loads(d) if isinstance(d, str) else d
     return pd.Interval(d['left'], d['right'], closed=d['closed'])
 
+"""Input Data Format Examples:
 
-# Configure pandas display options
-pd.set_option('display.max_columns', None)  # Show all columns when displaying DataFrames
-pd.options.mode.chained_assignment = None  # Suppress chained assignment warnings
+Plat Boundary DataFrame (plat_df):
+  Required columns:
+    - label (str): Section/concentration identifier
+    - geometry (Polygon): Shapely polygon of boundary coordinates
 
-# Initialize database connection
-conn_sample = sqlite3.connect('DX_sample.db')
+  Example:
+|    | label     | geometry                                                                                                                 |
+|---:|:---------|:-------------------------------------------------------------------------------------------------------------------------|
+|  0 | section1 | POLYGON ((47.38315 -102.457789, 47.38315 -102.455789, 47.38115 -102.455789, 47.38115 -102.457789, 47.38315 -102.457789)) |
+|  1 | section2 | POLYGON ((47.38115 -102.457789, 47.38115 -102.455789, 47.37915 -102.455789, 47.37915 -102.457789, 47.38115 -102.457789)) |
 
-# Load plat data and convert geometry columns
-query = "select * from PlatDF"
-plat_df = pd.read_sql(query, conn_sample)  # Plat definitions
-query = "select * from PlatAdj"
-plats_adjacent = pd.read_sql(query, conn_sample)  # Adjacent plat relationships
-query = "select * from DX_Original"
-dx_df_orig = pd.read_sql(query, conn_sample)  # Original directional survey data
+Directional Survey DataFrame (dx_df_orig): 
+  Required columns:
+    - measured_depth (float): Measured depth in feet 
+    - Inclination (float): Inclination angle in degrees
+    - Azimuth (float): Azimuth angle in degrees
+    - lat (float): Latitude coordinate in decimal degrees
+    - lon (float): Longitude coordinate in decimal degrees
 
-# Load and process depth interval data
-query = "select * from Depths"
-df_depths = pd.read_sql(query, conn_sample)
-df_depths['Interval'] = df_depths['Interval'].apply(dict_to_interval)
+  Example values from 0-10000' MD with 1000' stations
+|    |   measured_depth |   Inclination |   Azimuth |     lat |      lon |
+|---:|----------------:|--------------:|----------:|--------:|---------:|
+|  0 |               0 |             0 |       175 | 47.3822 | -102.457 |
+|  1 |            1000 |             5 |       175 | 47.3811 | -102.457 |
+|  2 |            2000 |            15 |       175 | 47.3802 | -102.457 |
+|  3 |            3000 |            45 |       175 | 47.3792 | -102.457 |
+|  4 |            4000 |            85 |       175 | 47.3781 | -102.457 |
+|  5 |            5000 |            89 |       175 | 47.3772 | -102.457 |
+|  6 |            6000 |            89 |       175 | 47.3762 | -102.457 |
+|  7 |            7000 |            89 |       175 | 47.3751 | -102.457 |
+|  8 |            8000 |            89 |       175 | 47.3742 | -102.457 |
+|  9 |            9000 |            89 |       175 | 47.3732 | -102.457 |
+| 10 |           10000 |            89 |       175 | 47.3721 | -102.457 |
 
-# Convert WKT strings to shapely geometry objects
-plat_df['geometry'] = plat_df['geometry'].apply(lambda row: wkt.loads(row))
-plat_df['centroid'] = plat_df['centroid'].apply(lambda row: wkt.loads(row))
-plats_adjacent['geometry'] = plats_adjacent['geometry'].apply(lambda row: wkt.loads(row))
-plats_adjacent['centroid'] = plats_adjacent['centroid'].apply(lambda row: wkt.loads(row))
+Casing/interval Data (df_depths):
+  Required columns:
+    - feature (str): interval identifier (e.g. 'Cond', 'Surf')
+    - casing_bottom (float): Bottom depth of casing in feet MD
+    - interval (str): Depth range interval in format '[start, end)'
 
-survey_data = {
-    'MeasuredDepth': [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000],
-    'Inclination': [0, 5, 15, 45, 85, 89, 89, 89, 89, 89, 89],
-    'Azimuth': [175, 175, 175, 175, 175, 175, 175, 175, 175, 175, 175],
-    'lat': [
-        47.382150, 47.381150, 47.380150, 47.379150,
-        47.378150, 47.377150, 47.376150, 47.375150,
-        47.374150, 47.373150, 47.372150
-    ],
-    'lon': [
-        -102.456789, -102.456789, -102.456789, -102.456789,
-        -102.456789, -102.456789, -102.456789, -102.456789,
-        -102.456789, -102.456789, -102.456789
-    ]
-}
-dx_df_orig = pd.DataFrame(survey_data)
-section1_coords = [
-    (47.383150, -102.457789),
-    (47.383150, -102.455789),
-    (47.381150, -102.455789),
-    (47.381150, -102.457789),
-    (47.383150, -102.457789)
-]
-
-# Section 2 coordinates (1 mile square)
-section2_coords = [
-    (47.381150, -102.457789),
-    (47.381150, -102.455789),
-    (47.379150, -102.455789),
-    (47.379150, -102.457789),
-    (47.381150, -102.457789)
-]
-
-used_plats = {'label': ['section1', 'section2'],'geometry':[Polygon(section1_coords), Polygon(section2_coords)]}
-plat_df = pd.DataFrame(used_plats)
+  Example shows standard casing program:
+    - Conductor: 0-100'
+    - Surface: 100-1700'
+    - Production: 1700-6300'
+    - Open Hole: 6300-20000'
+ex:
+|    | feature   |   casing_bottom | interval           |
+|---:|:----------|---------------:|:-------------------|
+|  0 | Cond      |           100   | [0.0, 100.0)        |
+|  1 | Surf      |         1700   | [100.0, 1700.0)     |
+|  2 | Prod      |         6300   | [1700.0, 6300.0)   |
+|  3 | P2        |        20000.0 | [6300.0, 20000.00) |
+"""
 
 # Process survey data and calculate clearances
 dx_df = SurveyProcess(
     df_referenced=dx_df_orig,
-    elevation=5515
-)
+    elevation=5515)
 
-kop = dx_df.find_kop(dx_df.true_dx)
-print('kop', kop)
+kop = dx_df.find_kick_off_point(dx_df.true_dx)
+lp = dx_df.find_landing_point(dx_df.true_dx)
+
 df_test = dx_df.drilled_depths_process(dx_df.true_dx, df_depths)
-# clear_df = ClearanceProcess(dx_df.true_dx, plat_df, plats_adjacent)
-# processed_dx_df, footages = clear_df.clearance_data, clear_df.whole_df
+clear_df = ClearanceProcess(dx_df.true_dx, plat_df)
+processed_dx_df, footages = clear_df.clearance_data, clear_df.whole_df
