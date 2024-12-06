@@ -44,8 +44,7 @@ Dependencies:
     - geopandas (optional)
     - scipy
 """
-import tabulate
-from functools import reduce
+
 from scipy.spatial import ConvexHull
 from rdp import rdp
 from welltrajconvert.wellbore_trajectory import *
@@ -54,86 +53,10 @@ import numpy.typing as npt
 import pandas as pd
 import numpy as np
 import math
-import tabulate
 from typing import Optional, Tuple, Union, TypeVar
-import pstats
-import cProfile
-from io import StringIO
+from numpy.typing import NDArray
+
 T = TypeVar('T', bound=List[Any])
-def analyzeTimeNoArgs(function_call):
-    print(f"Profiling: {function_call.__name__}")
-    profiler = cProfile.Profile()
-    profiler.runcall(function_call)  # Call the function without args
-
-    # Redirect pstats output to a string stream
-    s = StringIO()
-    ps = pstats.Stats(profiler, stream=s)
-    ps.sort_stats('cumulative')
-    ps.print_stats()
-
-    # Get the string output and process it
-    lines = s.getvalue().split('\n')
-    data = []
-    for line in lines[5:]:  # Skip the header lines
-        if line.strip():
-            fields = line.split(None, 5)
-            if len(fields) == 6:
-                ncalls, tottime, percall, cumtime, percall2, filename_lineno_function = fields
-                data.append({
-                    'ncalls': ncalls,
-                    'tottime': float(tottime),
-                    'percall': float(percall),
-                    'cumtime': float(cumtime),
-                    'percall2': float(percall2),
-                    'filename_lineno_function': filename_lineno_function
-                })
-
-    # Create DataFrame
-    df = pd.DataFrame(data)
-    df.sort_values(by='cumtime', inplace=True)
-    print(df.head(10))
-
-def analyzeTime2(function_call, args_list ):
-    print(str(function_call))
-    profiler = cProfile.Profile()
-    profiler.runcall(function_call, *args_list )
-
-    # Redirect pstats output to a string stream
-    s = StringIO()
-    ps = pstats.Stats(profiler, stream=s)
-    ps.sort_stats('cumulative')
-    ps.print_stats()
-
-    # Get the string output and process it
-    lines = s.getvalue().split('\n')
-    data = []
-    for line in lines[5:]:  # Skip the header lines
-        if line.strip():
-            fields = line.split(None, 5)
-            if len(fields) == 6:
-                ncalls, tottime, percall, cumtime, percall2, filename_lineno_function = fields
-                data.append({
-                    'ncalls': ncalls,
-                    'tottime': float(tottime),
-                    'percall': float(percall),
-                    'cumtime': float(cumtime),
-                    'percall2': float(percall2),
-                    'filename_lineno_function': filename_lineno_function
-                })
-
-    # Create DataFrame
-    df = pd.DataFrame(data)
-    df.sort_values(by='cumtime')
-    # df = df[(df['cumtime'] > 0.1)]
-
-    # excluded_location = r'C:\Work\RewriteAPD\ven2'
-    # filtered_df = df[~df['filename_lineno_function'].str.contains(excluded_location, case=False, regex=False)]
-    # filtered_df = filtered_df[
-    #     filtered_df['filename_lineno_function'].str.contains(r'C:\Work\RewriteAPD', case=False, regex=False)]
-
-    print(df.head(10).to_markdown())
-
-
 def _reorganize_lst_points_with_angle(
         lst: List[List[float]],
         centroid: List[float]
@@ -570,66 +493,164 @@ def _process_row(
 def _results_finder(
         segments: List[List[float]],
         dir_val: str,
-        well_trajectory: np.ndarray
+        well_trajectory: NDArray[np.float64]
 ) -> pd.DataFrame:
-    """Optimized clearance calculations between well trajectory and line segments."""
-    # Extract well trajectory components
-    well_indices = well_trajectory[:, 2]
-    well_points = well_trajectory[:, :2]
-    # print(segments)
-    # Convert segments to numpy array for vectorized operations
-    segments = np.array(segments)
-    # print(dir_val)
-    # print(segments)
-    # print()
-    p1 = segments[:, 0, :]
-    p2 = segments[:, 1, :]
-    segment_vectors = p2 - p1
-    segment_lengths_squared = np.sum(segment_vectors ** 2, axis=1)
+    """Calculates minimum clearance distances and geometric relationships between well trajectory
+    points and boundary line segments for a given cardinal direction.
 
-    # Pre-allocate result storage
-    distances = []
-    closest_points = []
-    angles = []
-    min_dist_indices = []
+    This function performs vectorized calculations to find the closest points, distances, and
+    intersection angles between well trajectory points and boundary segments. Results are
+    converted to engineering units and formatted into a DataFrame.
 
-    # Vectorized processing of all points against all segments
+    Args:
+        segments (List[List[float]]): List of line segments defining boundary lines, where each
+            segment is defined by two points [[x1,y1], [x2,y2]].
+        dir_val (str): Cardinal direction identifier ('North', 'South', 'East', 'West').
+        well_trajectory (np.ndarray): Array of shape (n,3) containing well trajectory points:
+            - Columns 0,1: x,y coordinates
+            - Column 2: point indices
+
+    Returns:
+        pd.DataFrame: Results containing for each trajectory point:
+            - point_index (int): Original trajectory point index
+            - distance_{dir_val} (float): Minimum clearance distance in feet
+            - closest_surface_point_{dir_val} (List[float]): [x,y] of closest point on boundary
+            - intersection_angle_{dir_val} (float): Acute angle in degrees between well-to-closest
+              vector and boundary segment
+            - segments_{dir_val} (List[List[float]]): Coordinates of the closest boundary segment
+
+    Notes:
+        - Uses vectorized numpy operations for performance optimization
+        - Distances are converted from meters to feet (divide by 0.3048)
+        - Handles projection clamping to segment endpoints
+        - Converts obtuse angles to acute angles (<=90°)
+        - Uses epsilon (1e-10) for numerical stability in angle calculations
+        - All segments are processed against all trajectory points
+
+    Example:
+        >>> segments = [[[0,0], [1,0]], [[1,0], [2,0]]]  # Two connected segments
+        >>> trajectory = np.array([[0.5, 1, 0], [1.5, 1, 1]])  # Two points with indices
+        >>> results = _results_finder(segments, 'North', trajectory)
+        >>> print(f"Clearance at first point: {results['distance_North'].iloc[0]:.1f} ft")
+    """
+    # Extract trajectory components for vectorized operations
+    well_indices: NDArray = well_trajectory[:, 2]
+    well_points: NDArray = well_trajectory[:, :2]
+
+    # Convert segments to numpy array for vectorized math
+    segments: NDArray = np.array(segments)
+    p1: NDArray = segments[:, 0, :]  # Start points of segments
+    p2: NDArray = segments[:, 1, :]  # End points of segments
+    segment_vectors: NDArray = p2 - p1
+    segment_lengths_squared: NDArray = np.sum(segment_vectors ** 2, axis=1)
+
+    # Pre-allocate result lists
+    distances: List[float] = []
+    closest_points: List[NDArray] = []
+    angles: List[float] = []
+    min_dist_indices: List[int] = []
+
+    # Process each well point against all segments
     for well_point in well_points:
-        well_point_diff = well_point - p1  # Differences from each segment start point
-        t = np.sum(well_point_diff * segment_vectors, axis=1) / segment_lengths_squared
-        t = np.clip(t, 0, 1)  # Clamp projection to segment bounds
+        # Calculate projection parameters
+        well_point_diff: NDArray = well_point - p1
+        t: NDArray = np.sum(well_point_diff * segment_vectors, axis=1) / segment_lengths_squared
+        t = np.clip(t, 0, 1)  # Constrain to segment bounds
 
-        closest_point = p1 + t[:, None] * segment_vectors  # Closest points on segments
-        distance = np.linalg.norm(well_point - closest_point, axis=1)  # L2 distances
+        # Find closest points and distances
+        closest_point: NDArray = p1 + t[:, None] * segment_vectors
+        distance: NDArray = np.linalg.norm(well_point - closest_point, axis=1)
 
-        # Calculate angles (convert obtuse angles to acute)
-        vector_to_closest = closest_point - well_point
-        norm_well_to_closest = np.linalg.norm(vector_to_closest, axis=1)
-        norm_segment_vectors = np.linalg.norm(segment_vectors, axis=1)
-        epsilon = 1e-10  # Numerical stability
-        cos_angles = np.sum(vector_to_closest * segment_vectors, axis=1) / (
-                norm_well_to_closest * norm_segment_vectors + epsilon
+        # Calculate intersection angles
+        vector_to_closest: NDArray = closest_point - well_point
+        norm_well_to_closest: NDArray = np.linalg.norm(vector_to_closest, axis=1)
+        norm_segment_vectors: NDArray = np.linalg.norm(segment_vectors, axis=1)
+
+        # Calculate and adjust angles
+        cos_angles: NDArray = np.sum(vector_to_closest * segment_vectors, axis=1) / (
+                norm_well_to_closest * norm_segment_vectors + 1e-10
         )
-        angle = np.degrees(np.arccos(np.clip(cos_angles, -1, 1)))
+        angle: NDArray = np.degrees(np.arccos(np.clip(cos_angles, -1, 1)))
         angle = np.where(angle > 90, 180 - angle, angle)
 
-        # Find minimum distance index
-        min_idx = np.argmin(distance)
+        # Store minimum distance results
+        min_idx: int = np.argmin(distance)
         distances.append(distance[min_idx])
         closest_points.append(closest_point[min_idx])
         angles.append(angle[min_idx])
         min_dist_indices.append(min_idx)
 
-    # Convert results to DataFrame
+    # Format results into DataFrame
     results_df = pd.DataFrame({
         "point_index": well_indices,
-        f"distance_{dir_val}": np.array(distances) / 0.3048,  # Convert to feet
+        f"distance_{dir_val}": np.array(distances) / 0.3048,  # Convert m to ft
         f"closest_surface_point_{dir_val}": closest_points,
         f"intersection_angle_{dir_val}": angles,
         f"segments_{dir_val}": [segments[i] for i in min_dist_indices]
     })
 
     return results_df
+
+# def _results_finder(
+#         segments: List[List[float]],
+#         dir_val: str,
+#         well_trajectory: np.ndarray
+# ) -> pd.DataFrame:
+#     """Optimized clearance calculations between well trajectory and line segments."""
+#     # Extract well trajectory components
+#     well_indices = well_trajectory[:, 2]
+#     well_points = well_trajectory[:, :2]
+#     # Convert segments to numpy array for vectorized operations
+#     segments = np.array(segments)
+#
+#     p1 = segments[:, 0, :]
+#     p2 = segments[:, 1, :]
+#     segment_vectors = p2 - p1
+#     segment_lengths_squared = np.sum(segment_vectors ** 2, axis=1)
+#
+#     # Pre-allocate result storage
+#     distances = []
+#     closest_points = []
+#     angles = []
+#     min_dist_indices = []
+#
+#     # Vectorized processing of all points against all segments
+#     for well_point in well_points:
+#         well_point_diff = well_point - p1  # Differences from each segment start point
+#         t = np.sum(well_point_diff * segment_vectors, axis=1) / segment_lengths_squared
+#         t = np.clip(t, 0, 1)  # Clamp projection to segment bounds
+#
+#         closest_point = p1 + t[:, None] * segment_vectors  # Closest points on segments
+#         distance = np.linalg.norm(well_point - closest_point, axis=1)  # L2 distances
+#
+#         # Calculate angles (convert obtuse angles to acute)
+#         vector_to_closest = closest_point - well_point
+#         norm_well_to_closest = np.linalg.norm(vector_to_closest, axis=1)
+#         norm_segment_vectors = np.linalg.norm(segment_vectors, axis=1)
+#         epsilon = 1e-10  # Numerical stability
+#         cos_angles = np.sum(vector_to_closest * segment_vectors, axis=1) / (
+#                 norm_well_to_closest * norm_segment_vectors + epsilon
+#         )
+#         angle = np.degrees(np.arccos(np.clip(cos_angles, -1, 1)))
+#         angle = np.where(angle > 90, 180 - angle, angle)
+#
+#         # Find minimum distance index
+#         min_idx = np.argmin(distance)
+#         distances.append(distance[min_idx])
+#         closest_points.append(closest_point[min_idx])
+#         angles.append(angle[min_idx])
+#         min_dist_indices.append(min_idx)
+#
+#     # Convert results to DataFrame
+#     results_df = pd.DataFrame({
+#         "point_index": well_indices,
+#         f"distance_{dir_val}": np.array(distances) / 0.3048,  # Convert to feet
+#         f"closest_surface_point_{dir_val}": closest_points,
+#         f"intersection_angle_{dir_val}": angles,
+#         f"segments_{dir_val}": [segments[i] for i in min_dist_indices]
+#     })
+#
+#     return results_df
 
 def _results_finder2(
         segments: List[List[float]],
@@ -1006,20 +1027,19 @@ class ClearanceProcess:
         self.plats = df_plat
 
         # Calculate concentrations for each survey point
-        self.df['Conc'] = self.df['shp_pt'].apply(self._find_conc)
+        self.df['label'] = self.df['shp_pt'].apply(self._find_conc)
 
         # Extract unique concentration values
-        self.all_polygons_concs = df_used['Conc'].unique()
+        self.all_polygons_concs = df_used['label'].unique()
 
         # Initialize empty DataFrame for complete dataset
         self.whole_df = pd.DataFrame()
 
         # Process clearance data
-        # analyzeTime2(self._main_clearance, [])
         self.clearance_data = self._main_clearance()
 
         # Extract used concentration values
-        self.used_conc = self.clearance_data['Conc'].unique().tolist()
+        self.used_conc = self.clearance_data['label'].unique().tolist()
 
     def _main_clearance(self) -> pd.DataFrame:
         """Processes clearance calculations for well trajectories against plat boundaries.
@@ -1048,52 +1068,7 @@ class ClearanceProcess:
             IndexError: When plat geometry is missing for a concentration
         """
         # Process each unique concentration
-        concat_lst = []
-        # analyzeTime2(self._loop_through_list(), [])
-        # analyzeTimeNoArgs(self._loop_through_list)
         self.whole_df = self._loop_through_list()
-        # for i in range(len(self.all_polygons_concs)):
-        #     # Extract trajectory points for current concentration
-        #     well_traj = self.df[self.df['Conc'] == self.all_polygons_concs[i]]
-        #     well_trajectory = well_traj[['Easting', 'Northing', 'point_index']].values
-        #
-        #     # Get polygon geometry for current concentration
-        #     try:
-        #         used_poly = list(
-        #             self.plats[self.plats['Conc'] == self.all_polygons_concs[i]]
-        #             ['geometry'].values.tolist()[0].exterior.coords
-        #         )
-        #     except IndexError:
-        #         print('index error on guisurvey tab')  # Consider logging instead
-        #         continue
-        #
-        #     # Generate directional boundary segments
-        #     right_lst_segments, left_lst_segments, up_lst_segments, down_lst_segments = _id_sides(used_poly)
-        #     # Calculate distances to each boundary
-        #     analyzeTime2(_results_finder, [left_lst_segments, 'West', well_trajectory])
-        #
-        #     left_df = _results_finder(left_lst_segments, 'West', well_trajectory)
-        #     right_df = _results_finder(right_lst_segments, 'East', well_trajectory)
-        #     down_df = _results_finder(down_lst_segments, 'South', well_trajectory)
-        #     up_df = _results_finder(up_lst_segments, 'North', well_trajectory)
-        #
-        #     # Merge north-south and east-west results
-        #     up_down = pd.merge(up_df, down_df, on='point_index')
-        #     left_right = pd.merge(left_df, right_df, on='point_index')
-        #
-        #     # Clean up intermediate columns
-        #     up_down = up_down.drop(columns=['well_point_y'])
-        #     left_right = left_right.drop(columns=['well_point_y'])
-        #
-        #     # Merge all directional results
-        #     all_data = pd.merge(up_down, left_right, on='point_index')
-        #     all_data = all_data.drop(columns=['well_point_x_y'])
-        #     all_data = all_data.rename(columns={'well_point_x_x': 'well_point'})
-        #     # Accumulate results
-        #     concat_lst.append(all_data)
-        #     # self.whole_df = pd.concat([all_data, self.whole_df]).reset_index(drop=True)
-        # self.whole_df = pd.concat(concat_lst).reset_index(drop=True)
-        # Final processing and column renaming
         self.whole_df = self.whole_df.sort_values(by=self.whole_df.columns[0])
         self.whole_df = self.whole_df.rename(
             columns={
@@ -1111,52 +1086,85 @@ class ClearanceProcess:
         return result
 
     def _loop_through_list(self) -> pd.DataFrame:
-        grouped = self.df.groupby('Conc')
+        """Processes well trajectory points to calculate clearance distances from plat boundaries
+        for each concentration zone.
 
-        # Extract unique concentrations and corresponding plat geometries
-        conc_geometries = {
+        This function groups trajectory points by concentration zones, calculates clearance
+        distances to cardinal direction boundaries (FEL, FWL, FNL, FSL), and combines results
+        with original trajectory data.
+
+        Returns:
+            pd.DataFrame: Combined results containing original trajectory data plus:
+                - FEL (float): Distance to East line in feet
+                - FWL (float): Distance to West line in feet
+                - FNL (float): Distance to North line in feet
+                - FSL (float): Distance to South line in feet
+                - closest_surface_point_{dir} (List[float]): [x,y] coordinates of closest points
+                - intersection_angle_{dir} (float): Angles between trajectory and boundaries
+                - segments_{dir} (List[List[float]]): Coordinates of closest boundary segments
+
+        Notes:
+            - Groups data by concentration zones for efficient processing
+            - Pre-computes boundary segments for each geometry
+            - Handles missing geometries gracefully with warning
+            - Uses vectorized operations for performance
+            - Preserves original trajectory point ordering
+            - Supports complex plat geometries
+            - All distances are in feet
+
+        Example:
+            >>> clearance = ClearanceProcess(trajectory_df, plat_df, adjacent_df)
+            >>> results = clearance._loop_through_list()
+            >>> print(f"Minimum FEL: {results['FEL'].min():.1f} ft")
+        """
+        # Group trajectory points by concentration zone
+        grouped: pd.core.groupby.DataFrameGroupBy = self.df.groupby('label')
+
+        # Pre-compute geometry coordinates dictionary
+        conc_geometries: Dict[str, List[Tuple[float, float]]] = {
             conc: list(geom.exterior.coords)
-            for conc, geom in self.plats.set_index('Conc')['geometry'].items()
+            for conc, geom in self.plats.set_index('label')['geometry'].items()
         }
 
-        # Precompute directional boundary segments for all geometries
-        boundary_segments = {
+        # Pre-compute directional boundary segments
+        boundary_segments: Dict[str, Tuple[List[List[float]], ...]] = {
             conc: _id_sides(geom_coords)
             for conc, geom_coords in conc_geometries.items()
         }
 
-        # Process each group
-        concat_lst = []
+        # Initialize results list
+        concat_lst: List[pd.DataFrame] = []
 
+        # Process each concentration group
         for conc, group in grouped:
-            # Extract well trajectory points
-            well_trajectory = group[['Easting', 'Northing', 'point_index']].values
+            # Extract trajectory points
+            well_trajectory: NDArray = group[['easting', 'northing', 'point_index']].values
 
-            # Get precomputed boundary segments
+            # Get boundary segments for current concentration
             segments = boundary_segments.get(conc)
             if segments is None:
                 print(f'No geometry found for concentration: {conc}')
                 continue
 
-            # Extract directional segments
+            # Unpack directional segments
             right_lst_segments, left_lst_segments, up_lst_segments, down_lst_segments = segments
 
-            # Perform calculations for each direction
-            dfs = {
+            # Calculate clearances for each direction
+            direction_results: Dict[str, pd.DataFrame] = {
                 'West': _results_finder(left_lst_segments, 'West', well_trajectory),
                 'East': _results_finder(right_lst_segments, 'East', well_trajectory),
                 'South': _results_finder(down_lst_segments, 'South', well_trajectory),
                 'North': _results_finder(up_lst_segments, 'North', well_trajectory)
             }
 
-            # Perform efficient joins using 'point_index'
-            for key in dfs:
-                dfs[key].set_index('point_index', inplace=True)
+            # Set index for efficient joining
+            for df in direction_results.values():
+                df.set_index('point_index', inplace=True)
 
-            # Combine results efficiently
-            combined_df = pd.concat(dfs.values(), axis=1)
+            # Combine directional results
+            combined_df: pd.DataFrame = pd.concat(direction_results.values(), axis=1)
 
-            # Rename columns directly during DataFrame construction
+            # Rename distance columns to standard notation
             combined_df.rename(columns={
                 'distance_East': 'FEL',
                 'distance_West': 'FWL',
@@ -1164,157 +1172,94 @@ class ClearanceProcess:
                 'distance_South': 'FSL'
             }, inplace=True)
 
-            # Reset index after joins
+            # Reset index for merging
             combined_df.reset_index(inplace=True)
 
-            # Merge with original group data
-            merged_data = group.merge(combined_df, on='point_index', how='left')
+            # Merge with original trajectory data
+            merged_data: pd.DataFrame = group.merge(
+                combined_df,
+                on='point_index',
+                how='left'
+            )
 
-            # Append to the results list
             concat_lst.append(merged_data)
 
-        # Concatenate results into a final DataFrame
-        final_df = pd.concat(concat_lst, ignore_index=True, sort=False)
+        # Combine all results
+        final_df: pd.DataFrame = pd.concat(
+            concat_lst,
+            ignore_index=True,
+            sort=False
+        )
 
         return final_df
 
-
-    def _loop_through_list3(self) -> pd.DataFrame:
-        """
-        Optimized loop through concentrations to calculate clearance distances.
-
-        Returns:
-            pd.DataFrame: Concatenated results for all concentrations.
-        """
-        # Group DataFrame by 'Conc' to handle all concentrations in a vectorized manner
-        grouped = self.df.groupby('Conc')
-
-        # Extract unique concentrations and corresponding plat geometries
-        conc_geometries = self.plats.set_index('Conc')['geometry'].to_dict()
-
-        # Initialize a list to collect results
-        concat_lst = []
-
-        # Iterate over each group using groupby
-        for conc, group in grouped:
-            # Extract well trajectory points
-            well_trajectory = group[['Easting', 'Northing', 'point_index']].values
-
-            # Get polygon geometry for the current concentration
-            used_poly = conc_geometries.get(conc, None)
-            if used_poly is None:
-                print(f'No geometry found for concentration: {conc}')
-                continue
-
-            # Extract exterior coordinates of the polygon
-            used_poly_coords = list(used_poly.exterior.coords)
-
-            # Generate directional boundary segments
-            right_lst_segments, left_lst_segments, up_lst_segments, down_lst_segments = _id_sides(used_poly_coords)
-
-            # Calculate distances to each boundary direction
-            left_df = _results_finder(left_lst_segments, 'West', well_trajectory)
-            right_df = _results_finder(right_lst_segments, 'East', well_trajectory)
-            down_df = _results_finder(down_lst_segments, 'South', well_trajectory)
-            up_df = _results_finder(up_lst_segments, 'North', well_trajectory)
-
-            # Set 'point_index' as index for efficient joining
-            for df in [up_df, down_df, left_df, right_df]:
-                df.set_index('point_index', inplace=True)
-
-            # Perform joins using indexed DataFrames
-            up_down = up_df.join(down_df, rsuffix='_South')
-            left_right = left_df.join(right_df, rsuffix='_West')
-            # Second join with suffix
-            all_data = up_down.join(left_right, rsuffix='_East_West')
-
-            # Drop redundant 'well_point' columns efficiently
-            cols_to_drop = [col for col in all_data.columns if 'well_point' in col and col != 'well_point']
-            all_data.drop(columns=cols_to_drop, inplace=True)
-
-            # Reset index once after all joins
-            all_data.reset_index(inplace=True)
-
-            # Rename columns to standard clearance labels
-            all_data.rename(columns={
-                'distance_East': 'FEL',
-                'distance_West': 'FWL',
-                'distance_North': 'FNL',
-                'distance_South': 'FSL'
-            }, inplace=True)
-
-            # Merge with the original group DataFrame
-            merged_data = group.merge(all_data, on='point_index', how='left')
-
-            # Append to the list
-            concat_lst.append(merged_data)
-
-        # Concatenate all results at once
-        final_df = pd.concat(concat_lst, ignore_index=True, sort=False)
-
-        return final_df
-
-    def _loop_through_list2(self):
-        concat_lst = []
-        for i in range(len(self.all_polygons_concs)):
-            # Extract trajectory points for current concentration
-            well_traj = self.df[self.df['Conc'] == self.all_polygons_concs[i]]
-            well_trajectory = well_traj[['Easting', 'Northing', 'point_index']].values
-
-            # Get polygon geometry for current concentration
-            try:
-                used_poly = list(
-                    self.plats[self.plats['Conc'] == self.all_polygons_concs[i]]
-                    ['geometry'].values.tolist()[0].exterior.coords
-                )
-            except IndexError:
-                print('index error on guisurvey tab')  # Consider logging instead
-                continue
-
-            # Generate directional boundary segments
-            right_lst_segments, left_lst_segments, up_lst_segments, down_lst_segments = _id_sides(used_poly)
-            # Calculate distances to each boundary
-
-            left_df = _results_finder(left_lst_segments, 'West', well_trajectory)
-            right_df = _results_finder(right_lst_segments, 'East', well_trajectory)
-            down_df = _results_finder(down_lst_segments, 'South', well_trajectory)
-            up_df = _results_finder(up_lst_segments, 'North', well_trajectory)
-            up_df.set_index('point_index', inplace=True)
-            down_df.set_index('point_index', inplace=True)
-            left_df.set_index('point_index', inplace=True)
-            right_df.set_index('point_index', inplace=True)
-
-            # 2. Use join instead of merge (faster when using indexes)
-            up_down = up_df.join(down_df, rsuffix='_South')
-            left_right = left_df.join(right_df, rsuffix='_West')
-            all_data = up_down.join(left_right)
-
-            # 3. Drop columns efficiently using a single operation
-            cols_to_drop = [col for col in all_data.columns if 'well_point' in col and col != 'well_point']
-            all_data = all_data.drop(columns=cols_to_drop)
-
-            # 4. Reset index only once at the end
-            all_data = all_data.reset_index()
-
-            # 5. Append without copying
-            concat_lst.append(all_data)
-
-            # Merge north-south and east-west results
-            # up_down = pd.merge(up_df, down_df, on='point_index')
-            # left_right = pd.merge(left_df, right_df, on='point_index')
-            #
-            # # Clean up intermediate columns
-            # up_down = up_down.drop(columns=['well_point_y'])
-            # left_right = left_right.drop(columns=['well_point_y'])
-            #
-            # # Merge all directional results
-            # all_data = pd.merge(up_down, left_right, on='point_index')
-            # all_data = all_data.drop(columns=['well_point_x_y'])
-            # all_data = all_data.rename(columns={'well_point_x_x': 'well_point'})
-            # # Accumulate results
-            # concat_lst.append(all_data)
-            # self.whole_df = pd.concat([all_data, self.whole_df]).reset_index(drop=True)
-        return pd.concat(concat_lst).reset_index(drop=True)
+    # def _loop_through_list(self) -> pd.DataFrame:
+    #     grouped = self.df.groupby('label')
+    #
+    #     # Extract unique concentrations and corresponding plat geometries
+    #     conc_geometries = {
+    #         conc: list(geom.exterior.coords)
+    #         for conc, geom in self.plats.set_index('label')['geometry'].items()
+    #     }
+    #
+    #     # Precompute directional boundary segments for all geometries
+    #     boundary_segments = {
+    #         conc: _id_sides(geom_coords)
+    #         for conc, geom_coords in conc_geometries.items()
+    #     }
+    #
+    #     # Process each group
+    #     concat_lst = []
+    #
+    #     for conc, group in grouped:
+    #         # Extract well trajectory points
+    #         well_trajectory = group[['Easting', 'Northing', 'point_index']].values
+    #
+    #         # Get precomputed boundary segments
+    #         segments = boundary_segments.get(conc)
+    #         if segments is None:
+    #             print(f'No geometry found for concentration: {conc}')
+    #             continue
+    #
+    #         # Extract directional segments
+    #         right_lst_segments, left_lst_segments, up_lst_segments, down_lst_segments = segments
+    #
+    #         # Perform calculations for each direction
+    #         dfs = {
+    #             'West': _results_finder(left_lst_segments, 'West', well_trajectory),
+    #             'East': _results_finder(right_lst_segments, 'East', well_trajectory),
+    #             'South': _results_finder(down_lst_segments, 'South', well_trajectory),
+    #             'North': _results_finder(up_lst_segments, 'North', well_trajectory)
+    #         }
+    #
+    #         # Perform efficient joins using 'point_index'
+    #         for key in dfs:
+    #             dfs[key].set_index('point_index', inplace=True)
+    #
+    #         # Combine results efficiently
+    #         combined_df = pd.concat(dfs.values(), axis=1)
+    #
+    #         # Rename columns directly during DataFrame construction
+    #         combined_df.rename(columns={
+    #             'distance_East': 'FEL',
+    #             'distance_West': 'FWL',
+    #             'distance_North': 'FNL',
+    #             'distance_South': 'FSL'
+    #         }, inplace=True)
+    #
+    #         # Reset index after joins
+    #         combined_df.reset_index(inplace=True)
+    #
+    #         # Merge with original group data
+    #         merged_data = group.merge(combined_df, on='point_index', how='left')
+    #
+    #         # Append to the results list
+    #         concat_lst.append(merged_data)
+    #
+    #     # Concatenate results into a final DataFrame
+    #     final_df = pd.concat(concat_lst, ignore_index=True, sort=False)
+    #
+    #     # return final_df
 
     def _find_conc(self, point: Point) -> Optional[Any]:
         """Finds the concentration value for a point by checking containing plat polygons.
@@ -1334,15 +1279,12 @@ class ClearanceProcess:
             - Performs sequential scan of all adjacent plats
             - Returns first matching concentration found
             - Returns None if point falls outside all plat boundaries
-            - Depends on adjacent_plats DataFrame having 'geometry' and 'Conc' columns
+            - Depends on adjacent_plats DataFrame having 'geometry' and 'label' columns
         """
         # Iterate through adjacent plats to find containing polygon
-        # for idx, row in self.adjacent_plats.iterrows():
-        #     if row['geometry'].contains(point):
-        #         return row['Conc']
         for idx, row in self.plats.iterrows():
             if row['geometry'].contains(point):
-                return row['Conc']
+                return row['label']
 
         # No containing polygon found
         return None
